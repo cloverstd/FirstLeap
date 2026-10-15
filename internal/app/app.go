@@ -104,7 +104,7 @@ func (a *App) mediaOK() bool {
 	}
 	if a.cfg.RequireCIFS {
 		var stat syscall.Statfs_t
-		if syscall.Statfs(a.cfg.MediaRoot, &stat) != nil || uint64(stat.Type) != 0xff534d42 || stat.Flags&syscall.MS_RDONLY == 0 {
+		if syscall.Statfs(a.cfg.MediaRoot, &stat) != nil || !readOnlySMB(&stat) {
 			return false
 		}
 	}
@@ -115,6 +115,12 @@ func (a *App) mediaOK() bool {
 	defer file.Close()
 	_, err = file.Readdirnames(1)
 	return err == nil // An empty mount is not a usable course source.
+}
+
+func readOnlySMB(stat *syscall.Statfs_t) bool {
+	// Linux reports SMB2/3 mounts with SMB2_SUPER_MAGIC, distinct from legacy CIFS.
+	typeID := uint64(stat.Type)
+	return (typeID == 0xff534d42 || typeID == 0xfe534d42) && stat.Flags&syscall.MS_RDONLY != 0
 }
 
 func (a *App) Run(ctx context.Context) {

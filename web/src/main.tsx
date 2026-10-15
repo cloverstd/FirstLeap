@@ -477,7 +477,9 @@ function Overview({
           </span>
           <span>
             <strong>
-              {course.duration ? (course.duration / 3600).toFixed(1) : "—"}{" "}
+              {course.duration && course.lessons.every((l) => l.duration > 0)
+                ? (course.duration / 3600).toFixed(1)
+                : "—"}{" "}
               <small>小时</small>
             </strong>
             <span>把知识讲透，把基础打牢</span>

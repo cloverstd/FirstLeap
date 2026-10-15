@@ -39,7 +39,7 @@ func main() {
 		log.Fatal("Unable to initialize application storage")
 	}
 	go a.Run(ctx)
-	server := &http.Server{Addr: ":" + env("PORT", "8000"), Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	server := &http.Server{Addr: env("BIND_ADDRESS", "0.0.0.0") + ":" + env("PORT", "8000"), Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	go func() {
 		<-ctx.Done()
 		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -48,6 +48,6 @@ func main() {
 	}()
 	log.Print("FirstLeap is listening")
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal("HTTP server stopped unexpectedly")
+		log.Fatalf("HTTP server stopped: %v", err)
 	}
 }

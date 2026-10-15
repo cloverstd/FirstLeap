@@ -8,8 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+func TestProductionSMBFilesystemTypes(t *testing.T) {
+	for _, typeID := range []int64{0xff534d42, 0xfe534d42} {
+		if !readOnlySMB(&syscall.Statfs_t{Type: typeID, Flags: syscall.MS_RDONLY}) {
+			t.Fatal("read-only SMB mount was rejected")
+		}
+		if readOnlySMB(&syscall.Statfs_t{Type: typeID}) {
+			t.Fatal("writable SMB mount accepted")
+		}
+	}
+	if readOnlySMB(&syscall.Statfs_t{Type: 0xef53, Flags: syscall.MS_RDONLY}) {
+		t.Fatal("ordinary local mount accepted")
+	}
+}
 
 func testApp(t *testing.T) (*App, string, []byte) {
 	t.Helper()

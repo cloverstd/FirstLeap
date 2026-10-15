@@ -33,6 +33,7 @@ pnpm test:e2e
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `8000` | HTTP 端口 |
+| `BIND_ADDRESS` | `0.0.0.0` | 监听地址；临时预览可限定为 `127.0.0.1` |
 | `MEDIA_ROOT` | `/media` | 课程目录，只读 |
 | `DATA_ROOT` | `/data` | 元数据与缩略图缓存，可写 |
 | `WEB_ROOT` | `web/dist` | 静态页面目录，镜像中为 `/app/web` |
