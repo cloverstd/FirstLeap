@@ -195,7 +195,15 @@ function CourseList({
   });
   const activeRow = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (compact) activeRow.current?.scrollIntoView({ block: "nearest" });
+    const row = activeRow.current;
+    const list = row?.closest<HTMLElement>(".lesson-list");
+    if (compact && row && list) {
+      // Scroll only the playlist. scrollIntoView also moves the mobile page away from the player.
+      list.scrollTop +=
+        row.getBoundingClientRect().top -
+        list.getBoundingClientRect().top -
+        (list.clientHeight - row.clientHeight) / 2;
+    }
   }, [current, compact]);
   return (
     <section

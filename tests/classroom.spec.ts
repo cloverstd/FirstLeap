@@ -106,6 +106,14 @@ test("source outage preserves catalog and offers retry", async ({ page }) => {
   await expect(page.getByRole("button", { name: "开始第一课" })).toBeEnabled();
 });
 
+test("opening a lesson keeps the player in view", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/learn/lesson25");
+  await expect(page.locator(".lesson-row.selected")).toBeVisible();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator("video")).toBeInViewport({ ratio: 0.9 });
+});
+
 test("restores playback position from browser storage", async ({ page }) => {
   await page.addInitScript(() =>
     localStorage.setItem(
