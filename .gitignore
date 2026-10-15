@@ -1,0 +1,17 @@
+node_modules/
+web/dist/
+dist/
+data/
+.env
+.env.*
+!.env.example
+*.credentials
+*.pem
+secrets/
+playwright-report/
+test-results/
+*.mp4
+*.jpg
+*.jpeg
+*.png
+!web/public/*

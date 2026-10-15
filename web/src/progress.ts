@@ -1,0 +1,81 @@
+export type LessonProgress = {
+  position: number;
+  duration: number;
+  completed: boolean;
+  updatedAt: number;
+};
+export type Progress = {
+  version: 1;
+  lastLesson: string;
+  lessons: Record<string, LessonProgress>;
+};
+export const STORAGE_KEY = "firstleap.progress.v1";
+export const emptyProgress = (): Progress => ({
+  version: 1,
+  lastLesson: "",
+  lessons: {},
+});
+
+export function parseProgress(raw: string | null): Progress {
+  try {
+    const value = JSON.parse(raw || "null");
+    if (
+      !value ||
+      value.version !== 1 ||
+      !value.lessons ||
+      typeof value.lessons !== "object"
+    )
+      return emptyProgress();
+    const result = emptyProgress();
+    result.lastLesson =
+      typeof value.lastLesson === "string" ? value.lastLesson : "";
+    for (const [id, entry] of Object.entries(value.lessons)) {
+      const e = entry as Partial<LessonProgress> | null;
+      if (!e || typeof e.position !== "number" || !Number.isFinite(e.position))
+        continue;
+      const duration =
+        typeof e.duration === "number" && Number.isFinite(e.duration)
+          ? Math.max(0, e.duration)
+          : 0;
+      result.lessons[id] = {
+        position: Math.max(
+          0,
+          duration ? Math.min(e.position, duration) : e.position,
+        ),
+        duration,
+        completed: e.completed === true,
+        updatedAt: typeof e.updatedAt === "number" ? e.updatedAt : 0,
+      };
+    }
+    return result;
+  } catch {
+    return emptyProgress();
+  }
+}
+
+export function resumePosition(
+  progress: LessonProgress | undefined,
+  duration: number,
+): number {
+  if (!progress || !Number.isFinite(duration) || duration <= 0) return 0;
+  return progress.position >= duration - 3
+    ? 0
+    : Math.max(0, Math.min(progress.position, duration));
+}
+
+export function loadProgress(): Progress {
+  try {
+    return parseProgress(localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return emptyProgress();
+  }
+}
+
+export function saveProgress(progress: Progress): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    return true;
+  } catch {
+    return false;
+  }
+}

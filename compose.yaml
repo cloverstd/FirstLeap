@@ -1,0 +1,41 @@
+services:
+  firstleap:
+    image: ${FIRSTLEAP_IMAGE:?Set FIRSTLEAP_IMAGE to the published image digest}
+    # systemd owns boot ordering; on-failure does not start before the mount at boot.
+    restart: on-failure
+    init: true
+    environment:
+      REQUIRE_CIFS: "true"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ${FIRSTLEAP_MEDIA_PATH:?Set FIRSTLEAP_MEDIA_PATH to the dedicated CIFS mount}
+        target: /media
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
+    networks: [traefik-net]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-net
+      traefik.http.routers.firstleap.rule: Host(`${FIRSTLEAP_HOST:?Set FIRSTLEAP_HOST}`)
+      traefik.http.routers.firstleap.entrypoints: websecure
+      traefik.http.routers.firstleap.tls: "true"
+      traefik.http.services.firstleap.loadbalancer.server.port: "8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+networks:
+  traefik-net:
+    external: true

@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+web/dist
+dist
+data
+.env*
+**/*.credentials
+**/secrets
+**/*.mp4
+test-results
+playwright-report

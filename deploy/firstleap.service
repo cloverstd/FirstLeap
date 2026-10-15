@@ -1,0 +1,19 @@
+[Unit]
+Description=FirstLeap course classroom
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/firstleap/media
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/docker-compose/firstleap
+ExecStartPre=/usr/bin/mountpoint -q /srv/firstleap/media
+ExecStart=/usr/bin/docker compose up -d --force-recreate --remove-orphans
+ExecStop=/usr/bin/docker compose stop
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
