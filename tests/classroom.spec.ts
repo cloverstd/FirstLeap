@@ -275,6 +275,36 @@ test("reading switch restores separate progress and preserves lecture completion
   ).toBe(true);
 });
 
+test("leaving the classroom saves the final reading position", async ({
+  page,
+}) => {
+  await page.route("**/api/courses/ncese01", (route) =>
+    route.fulfill({
+      json: {
+        ...course,
+        lessons: lessons.map((l) =>
+          l.id === "lesson1" ? { ...l, reading } : l,
+        ),
+      },
+    }),
+  );
+  await page.goto("/learn/lesson1");
+  await page.getByRole("button", { name: "美音朗读", exact: true }).click();
+  await metadata(page, 16);
+  await page.locator("video").evaluate((el: HTMLVideoElement) => {
+    el.currentTime = 8;
+  });
+  await page.getByRole("button", { name: "我的课堂", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("firstleap.reading.progress.v1")!)
+          .lessons["nce1-reading-001"].position,
+    ),
+  ).toBe(8);
+});
+
 test("missing reading stops continuous playback without selecting another file", async ({
   page,
 }) => {

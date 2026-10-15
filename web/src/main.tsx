@@ -803,6 +803,8 @@ function Classroom({
     loadProgress(READING_STORAGE_KEY),
   );
   const [readingStorageError, setReadingStorageError] = useState(false);
+  const readingProgressRef = useRef(readingProgress);
+  readingProgressRef.current = readingProgress;
   useEffect(() => {
     const listener = (e: StorageEvent) => {
       if (e.key === READING_STORAGE_KEY)
@@ -813,27 +815,27 @@ function Classroom({
   }, []);
   const updateReading: UpdateProgress = useCallback(
     (id, patch, markLast = false) => {
-      setReadingProgress((previous) => {
-        const next: Progress = {
-          ...previous,
-          lastLesson: markLast ? id : previous.lastLesson,
-          lessons: {
-            ...previous.lessons,
-            [id]: {
-              ...(previous.lessons[id] ?? {
-                position: 0,
-                duration: 0,
-                completed: false,
-              }),
-              ...patch,
-              updatedAt: Date.now(),
-            },
+      const previous = readingProgressRef.current;
+      const next: Progress = {
+        ...previous,
+        lastLesson: markLast ? id : previous.lastLesson,
+        lessons: {
+          ...previous.lessons,
+          [id]: {
+            ...(previous.lessons[id] ?? {
+              position: 0,
+              duration: 0,
+              completed: false,
+            }),
+            ...patch,
+            updatedAt: Date.now(),
           },
-        };
-        if (!saveProgress(next, READING_STORAGE_KEY))
-          queueMicrotask(() => setReadingStorageError(true));
-        return next;
-      });
+        },
+      };
+      if (!saveProgress(next, READING_STORAGE_KEY))
+        queueMicrotask(() => setReadingStorageError(true));
+      readingProgressRef.current = next;
+      setReadingProgress(next);
     },
     [],
   );
