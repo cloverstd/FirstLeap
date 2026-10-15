@@ -6,6 +6,7 @@ services:
     init: true
     environment:
       REQUIRE_CIFS: "true"
+      READING_ROOT: /readings
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -15,6 +16,12 @@ services:
       - type: bind
         source: ${FIRSTLEAP_MEDIA_PATH:?Set FIRSTLEAP_MEDIA_PATH to the dedicated CIFS mount}
         target: /media
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIRSTLEAP_READING_PATH:?Set FIRSTLEAP_READING_PATH to the reading CIFS mount}
+        target: /readings
         read_only: true
         bind:
           create_host_path: false

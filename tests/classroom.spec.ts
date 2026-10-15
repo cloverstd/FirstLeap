@@ -38,6 +38,9 @@ const course = {
 };
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/reading/video", (route) =>
+    route.fulfill({ status: 503 }),
+  );
   await page.route("**/api/courses/ncese01", (route) =>
     route.fulfill({ json: course }),
   );
@@ -110,7 +113,12 @@ test("opening a lesson keeps the player in view", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/learn/lesson25");
   await expect(page.locator(".lesson-row.selected")).toBeVisible();
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
   await expect(page.locator("video")).toBeInViewport({ ratio: 0.9 });
 });
 
@@ -145,4 +153,191 @@ test("restores playback position from browser storage", async ({ page }) => {
       .locator("video")
       .evaluate((el: HTMLVideoElement) => el.currentTime),
   ).toBe(120);
+});
+
+const reading = {
+  id: "nce1-reading-001",
+  number: 1,
+  duration: 16,
+  status: "ready",
+};
+async function metadata(
+  page: import("@playwright/test").Page,
+  duration: number,
+) {
+  await page.locator("video").evaluate((el: HTMLVideoElement, value) => {
+    Object.defineProperty(el, "duration", { value, configurable: true });
+    el.dispatchEvent(new Event("loadedmetadata"));
+  }, duration);
+}
+test("reading switch restores separate progress and preserves lecture completion", async ({
+  page,
+}) => {
+  await page.route("**/api/courses/ncese01", (route) =>
+    route.fulfill({
+      json: {
+        ...course,
+        lessons: lessons.map((l) =>
+          l.id === "lesson1" ? { ...l, reading } : l,
+        ),
+      },
+    }),
+  );
+  await page.route("**/reading/video", (route) =>
+    route.fulfill({ status: 503 }),
+  );
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("firstleap.progress.v1"))
+      localStorage.setItem(
+        "firstleap.progress.v1",
+        JSON.stringify({
+          version: 1,
+          lastLesson: "lesson1",
+          lessons: {
+            lesson1: { position: 120, duration: 2234, completed: false },
+          },
+        }),
+      );
+    if (!localStorage.getItem("firstleap.reading.progress.v1"))
+      localStorage.setItem(
+        "firstleap.reading.progress.v1",
+        JSON.stringify({
+          version: 1,
+          lastLesson: "nce1-reading-001",
+          lessons: {
+            "nce1-reading-001": { position: 6, duration: 16, completed: false },
+          },
+        }),
+      );
+  });
+  await page.goto("/learn/lesson1");
+  await expect(
+    page.getByRole("button", { name: "课程讲解", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await metadata(page, 2234);
+  expect(
+    await page
+      .locator("video")
+      .evaluate((el: HTMLVideoElement) => el.currentTime),
+  ).toBe(120);
+  await page.getByRole("button", { name: "美音朗读", exact: true }).click();
+  await expect(page.locator("video")).toHaveAttribute(
+    "src",
+    "/api/lessons/lesson1/reading/video",
+  );
+  await metadata(page, 16);
+  expect(
+    await page
+      .locator("video")
+      .evaluate((el: HTMLVideoElement) => el.currentTime),
+  ).toBe(6);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "美音朗读", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await metadata(page, 16);
+  expect(
+    await page
+      .locator("video")
+      .evaluate((el: HTMLVideoElement) => el.currentTime),
+  ).toBe(6);
+  const bounds = await page.locator(".reading-video").boundingBox();
+  expect(bounds!.width / bounds!.height).toBeCloseTo(4 / 3, 1);
+  await page
+    .locator("video")
+    .evaluate((el) => el.dispatchEvent(new Event("ended")));
+  await expect(page.locator(".complete-button")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByRole("button", { name: "课程讲解", exact: true }).click();
+  await expect(page.locator(".complete-button")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await metadata(page, 2234);
+  expect(
+    await page
+      .locator("video")
+      .evaluate((el: HTMLVideoElement) => el.currentTime),
+  ).toBe(120);
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("firstleap.progress.v1")!).lessons
+          .lesson1.completed,
+    ),
+  ).toBe(false);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("missing reading stops continuous playback without selecting another file", async ({
+  page,
+}) => {
+  const missing = {
+    ...lessons[1],
+    id: "lesson137",
+    label: "Lesson 137 & 138",
+    title: "A pleasant dream",
+    reading: {
+      id: "nce1-reading-137",
+      number: 137,
+      duration: 0,
+      status: "missing",
+    },
+  };
+  await page.route("**/api/courses/ncese01", (route) =>
+    route.fulfill({
+      json: { ...course, lessons: [{ ...lessons[1], reading }, missing] },
+    }),
+  );
+  await page.route("**/reading/video", (route) =>
+    route.fulfill({ status: 503 }),
+  );
+  await page.goto("/learn/lesson1");
+  await page.getByRole("button", { name: "美音朗读", exact: true }).click();
+  await page.getByRole("checkbox", { name: "连续播放" }).check();
+  await page
+    .locator("video")
+    .evaluate((el) => el.dispatchEvent(new Event("ended")));
+  await expect(page).toHaveURL(/\/learn\/lesson137$/);
+  await expect(page.getByRole("status")).toContainText(
+    "Lesson 137 朗读视频尚未添加",
+  );
+  await expect(page.locator("video")).toHaveCount(0);
+  await expect(page.locator(".complete-button")).toBeDisabled();
+  await page.getByRole("button", { name: "观看课程讲解" }).click();
+  await expect(page.locator("video")).toHaveAttribute(
+    "src",
+    "/api/lessons/lesson137/video",
+  );
+});
+
+test("reading source outage recovers independently of lecture", async ({
+  page,
+}) => {
+  const respond = (status: string) => ({
+    ...course,
+    lessons: lessons.map((l) =>
+      l.id === "lesson1" ? { ...l, reading: { ...reading, status } } : l,
+    ),
+  });
+  await page.route("**/api/courses/ncese01", (route) =>
+    route.fulfill({ json: respond("unavailable") }),
+  );
+  await page.goto("/learn/lesson1");
+  await page.getByRole("button", { name: "美音朗读", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("朗读视频源暂时不可用");
+  await page.route("**/api/courses/ncese01", (route) =>
+    route.fulfill({ json: respond("ready") }),
+  );
+  await page.reload();
+  await expect(page.locator("video")).toHaveAttribute(
+    "src",
+    "/api/lessons/lesson1/reading/video",
+  );
 });

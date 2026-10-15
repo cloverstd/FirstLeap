@@ -63,17 +63,18 @@ export function resumePosition(
     : Math.max(0, Math.min(progress.position, duration));
 }
 
-export function loadProgress(): Progress {
+export const READING_STORAGE_KEY = "firstleap.reading.progress.v1";
+export function loadProgress(key = STORAGE_KEY): Progress {
   try {
-    return parseProgress(localStorage.getItem(STORAGE_KEY));
+    return parseProgress(localStorage.getItem(key));
   } catch {
     return emptyProgress();
   }
 }
 
-export function saveProgress(progress: Progress): boolean {
+export function saveProgress(progress: Progress, key = STORAGE_KEY): boolean {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+    localStorage.setItem(key, JSON.stringify(progress));
     return true;
   } catch {
     return false;

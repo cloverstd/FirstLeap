@@ -22,16 +22,17 @@ import (
 )
 
 type Config struct {
-	MediaRoot, DataRoot, WebRoot string
-	RequireCIFS                  bool
+	MediaRoot, ReadingRoot, DataRoot, WebRoot string
+	RequireCIFS                               bool
 }
 type Lesson struct {
-	ID        string  `json:"id"`
-	Order     int     `json:"order"`
-	Label     string  `json:"label"`
-	Title     string  `json:"title"`
-	Duration  float64 `json:"duration"`
-	Thumbnail bool    `json:"thumbnail"`
+	ID        string   `json:"id"`
+	Order     int      `json:"order"`
+	Label     string   `json:"label"`
+	Title     string   `json:"title"`
+	Duration  float64  `json:"duration"`
+	Thumbnail bool     `json:"thumbnail"`
+	Reading   *Reading `json:"reading,omitempty"`
 }
 type entry struct {
 	Lesson
@@ -55,6 +56,8 @@ type App struct {
 	entries             map[string]entry
 	available, indexing bool
 	scanMu              sync.Mutex
+	readings            map[int]readingEntry
+	readingsAvailable   bool
 }
 
 var prefix = regexp.MustCompile(`^(\d+)\s*[-–—]\s*`)
@@ -87,7 +90,10 @@ func New(cfg Config) (*App, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.DataRoot, "thumbnails"), 0750); err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, entries: make(map[string]entry), indexing: true}
+	a := &App{cfg: cfg, entries: make(map[string]entry), readings: make(map[int]readingEntry), indexing: true}
+	if data, err := os.ReadFile(filepath.Join(cfg.DataRoot, "readings", "catalog.json")); err == nil {
+		_ = json.Unmarshal(data, &a.readings)
+	}
 	if data, err := os.ReadFile(filepath.Join(cfg.DataRoot, "catalog.json")); err == nil {
 		_ = json.Unmarshal(data, &a.entries)
 	}
@@ -97,18 +103,23 @@ func New(cfg Config) (*App, error) {
 	return a, nil
 }
 
-func (a *App) mediaOK() bool {
-	info, err := os.Stat(a.cfg.MediaRoot)
+func (a *App) mediaOK() bool { return a.sourceOK(a.cfg.MediaRoot) }
+
+func (a *App) sourceOK(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
 		return false
 	}
 	if a.cfg.RequireCIFS {
 		var stat syscall.Statfs_t
-		if syscall.Statfs(a.cfg.MediaRoot, &stat) != nil || !readOnlySMB(&stat) {
+		if syscall.Statfs(path, &stat) != nil || !readOnlySMB(&stat) {
 			return false
 		}
 	}
-	file, err := os.Open(a.cfg.MediaRoot)
+	file, err := os.Open(path)
 	if err != nil {
 		return false
 	}
@@ -124,6 +135,7 @@ func readOnlySMB(stat *syscall.Statfs_t) bool {
 }
 
 func (a *App) Run(ctx context.Context) {
+	go a.runReadings(ctx)
 	a.scan(ctx)
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -295,7 +307,9 @@ func (a *App) course() Course {
 	defer a.mu.RUnlock()
 	c := Course{ID: "ncese01", Title: "新概念英语第一册", Teacher: "霍娜", Description: "从第一句问候开始，建立扎实的英语基础。跟随霍娜老师，在熟悉的生活情境中，循序渐进地学习词汇、语法与表达。", Lessons: []Lesson{}, SourceAvailable: a.available, Indexing: a.indexing}
 	for _, e := range a.entries {
-		c.Lessons = append(c.Lessons, e.Lesson)
+		lesson := e.Lesson
+		lesson.Reading = a.readingFor(lesson)
+		c.Lessons = append(c.Lessons, lesson)
 		c.Duration += e.Duration
 	}
 	sort.Slice(c.Lessons, func(i, j int) bool {
@@ -319,6 +333,7 @@ func failure(w http.ResponseWriter, status int, message string) {
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/lessons/{id}/reading/video", a.readingVideo)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, map[string]bool{"ok": true}) })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		if !a.mediaOK() || len(a.course().Lessons) == 0 {

@@ -2,7 +2,7 @@
 
 一个安静、专注的个人英语课堂。首版包含新概念英语第一册课程目录、视频播放、搜索、倍速、浏览器续播和完成进度。
 
-React + TypeScript + Vite 前端，Go HTTP 服务，单一 Docker 镜像。Go 直接流式读取只读媒体目录，支持 Range、HEAD、条件请求；原始 H.264/AAC MP4 不转码。`ffprobe` 和 `ffmpeg` 仅用于时长与缩略图。无账号、无数据库，学习进度保存在当前浏览器；清除站点数据会清除进度。
+React + TypeScript + Vite 前端，Go HTTP 服务，单一 Docker 镜像。Go 直接流式读取只读媒体目录，支持 Range、HEAD、条件请求；原始 H.264/AAC MP4 不转码。`ffprobe` 和 `ffmpeg` 用于元数据、缩略图与朗读视频兼容副本；讲解原视频不转码。无账号、无数据库，学习进度保存在当前浏览器；清除站点数据会清除进度。
 
 ## 本地开发
 
@@ -90,3 +90,17 @@ docker compose logs --tail=50
 ## 使用边界
 
 这是可信私有网络中的个人课堂，无账号与跨设备进度同步。课程内容来自部署者自己的媒体源。视频和派生缓存均排除在源码及镜像构建上下文之外。
+
+## 美音朗读视频
+
+每节正式课程提供“课程讲解 / 美音朗读”切换，分别保存播放位置与完成状态。首页完成率仍按讲解统计；朗读进度使用独立的 `firstleap.reading.progress.v1` 浏览器存储。初次默认讲解，之后记住视频类型。导学课无朗读；缺失课文明确提示，连续播放在缺失处停止。
+
+朗读源通过 `READING_ROOT` 配置（本地开发可省略，生产 Compose 为 `/readings`）。文件名采用 `新概念第一册美音版第01集.mp4`，只接收 1–143 的奇数课号，按课号关联讲解而不是文件排序。同课号重复文件会报告处理失败，不随意取一个。添加文件后最长约 5 分钟重新发现；源恢复后提前重新扫描。
+
+新增接口 `GET/HEAD /api/lessons/{id}/reading/video` 支持 Range、ETag 和 If-Range；现有课程响应的 `reading` 包含稳定 ID、课号、时长与 `ready/processing/missing/error/unavailable` 状态。导学课没有 `reading`。未配置或源故障时朗读单独显示不可用，不影响讲解就绪检查。
+
+原始朗读文件保持只读。后台单任务队列转为原分辨率 H.264、yuv420p、CRF 20、AAC 音轨复制及 faststart MP4，供手机与电脑播放；派生文件及目录缓存在 `DATA_ROOT/readings`。按源文件路径、大小、修改时间和转码版本复用缓存，转换完成后原子替换，失败在下一次扫描重试。首次准备期间可正常观看讲解。缓存不进入镜像或 Git；备份、更新与回滚时保留整个数据目录。
+
+在既有部署上，以 root 执行 `deploy/install-reading-mount.py`。脚本只在服务器读取已有私有 mount 配置，从课程源推导对应的 `-video` 同级目录并复用凭据，不输出共享地址。生成 `/srv/firstleap/readings` 的独立只读 CIFS 挂载。为服务器 `.env` 增加 `FIRSTLEAP_READING_PATH=/srv/firstleap/readings`，更新 Compose 和 systemd 服务文件；服务会等待两个真实挂载，再创建容器。未挂载时不会创建空宿主目录代替媒体源。
+
+等待 Actions 发布后使用新镜像 digest 部署。检查 `reading.status` 全部就绪、缺失课号提示正确，并实测首、中、末朗读视频。回滚时恢复旧镜像 digest；新增只读挂载及缓存可以保留。不要修改源文件来测试故障，使用测试目录或隔离的预览实例验证。

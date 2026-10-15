@@ -29,6 +29,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install media test tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: go vet ./... && go test -race ./...
       - run: pnpm test && pnpm build
       - run: pnpm exec playwright install --with-deps chromium

@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import {
   loadProgress,
+  READING_STORAGE_KEY,
   resumePosition,
   saveProgress,
   type LessonProgress,
@@ -38,6 +39,12 @@ type Lesson = {
   title: string;
   duration: number;
   thumbnail: boolean;
+  reading?: {
+    id: string;
+    number: number;
+    duration: number;
+    status: "ready" | "processing" | "missing" | "error" | "unavailable";
+  };
 };
 type Course = {
   id: string;
@@ -600,12 +607,16 @@ function Player({
   update,
   onEnded,
   autoplay,
+  reading = false,
+  progressID = lesson.id,
 }: {
   lesson: Lesson;
   progress?: LessonProgress;
   update: UpdateProgress;
   onEnded: () => void;
   autoplay: boolean;
+  reading?: boolean;
+  progressID?: string;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const saved = useRef(progress);
@@ -620,7 +631,7 @@ function Player({
     const persist = () => {
       if (el && Number.isFinite(el.duration) && el.currentTime > 0)
         updateRef.current(
-          lesson.id,
+          progressID,
           { position: el.currentTime, duration: el.duration },
           true,
         );
@@ -632,22 +643,23 @@ function Player({
     document.addEventListener("visibilitychange", visibility);
     return () => {
       persist();
+      el?.pause();
       window.removeEventListener("pagehide", persist);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [lesson.id]);
+  }, [progressID]);
   const persist = () => {
     const el = video.current;
     if (el && Number.isFinite(el.duration))
       update(
-        lesson.id,
+        progressID,
         { position: el.currentTime, duration: el.duration },
         true,
       );
   };
   return (
     <>
-      <div className="video-shell">
+      <div className={`video-shell ${reading ? "reading-video" : ""}`}>
         <video
           ref={video}
           controls
@@ -655,10 +667,14 @@ function Player({
           preload="metadata"
           autoPlay={autoplay}
           poster={
-            lesson.thumbnail ? `/api/lessons/${lesson.id}/thumbnail` : undefined
+            !reading && lesson.thumbnail
+              ? `/api/lessons/${lesson.id}/thumbnail`
+              : undefined
           }
-          src={`/api/lessons/${lesson.id}/video`}
-          aria-label={lesson.title}
+          src={`/api/lessons/${lesson.id}/${reading ? "reading/" : ""}video`}
+          aria-label={
+            reading ? `Lesson ${lesson.reading?.number} 美音朗读` : lesson.title
+          }
           onLoadedMetadata={() => {
             const el = video.current;
             if (el) {
@@ -688,11 +704,15 @@ function Player({
           onEnded={() => {
             const el = video.current;
             update(
-              lesson.id,
+              progressID,
               {
                 completed: true,
-                position: el?.duration || lesson.duration,
-                duration: el?.duration || lesson.duration,
+                position:
+                  el?.duration ||
+                  (reading ? lesson.reading?.duration || 0 : lesson.duration),
+                duration:
+                  el?.duration ||
+                  (reading ? lesson.reading?.duration || 0 : lesson.duration),
               },
               true,
             );
@@ -770,7 +790,69 @@ function Classroom({
 }) {
   const [continuous, setContinuous] = useState(false);
   const index = course.lessons.findIndex((l) => l.id === lesson.id);
-  const completed = progress.lessons[lesson.id]?.completed;
+  const [mode, setMode] = useState(() => {
+    try {
+      return localStorage.getItem("firstleap.player-mode.v1") === "reading"
+        ? "reading"
+        : "lecture";
+    } catch {
+      return "lecture";
+    }
+  });
+  const [readingProgress, setReadingProgress] = useState(() =>
+    loadProgress(READING_STORAGE_KEY),
+  );
+  const [readingStorageError, setReadingStorageError] = useState(false);
+  useEffect(() => {
+    const listener = (e: StorageEvent) => {
+      if (e.key === READING_STORAGE_KEY)
+        setReadingProgress(loadProgress(READING_STORAGE_KEY));
+    };
+    window.addEventListener("storage", listener);
+    return () => window.removeEventListener("storage", listener);
+  }, []);
+  const updateReading: UpdateProgress = useCallback(
+    (id, patch, markLast = false) => {
+      setReadingProgress((previous) => {
+        const next: Progress = {
+          ...previous,
+          lastLesson: markLast ? id : previous.lastLesson,
+          lessons: {
+            ...previous.lessons,
+            [id]: {
+              ...(previous.lessons[id] ?? {
+                position: 0,
+                duration: 0,
+                completed: false,
+              }),
+              ...patch,
+              updatedAt: Date.now(),
+            },
+          },
+        };
+        if (!saveProgress(next, READING_STORAGE_KEY))
+          queueMicrotask(() => setReadingStorageError(true));
+        return next;
+      });
+    },
+    [],
+  );
+  const isReading = mode === "reading" && Boolean(lesson.reading);
+  const activeID = isReading ? lesson.reading!.id : lesson.id;
+  const activeProgress = isReading
+    ? readingProgress.lessons[activeID]
+    : progress.lessons[activeID];
+  const activeUpdate = isReading ? updateReading : update;
+  const completed = activeProgress?.completed;
+  const readingReady = lesson.reading?.status === "ready";
+  const readingMessage =
+    lesson.reading?.status === "missing"
+      ? `Lesson ${lesson.reading.number} 朗读视频尚未添加`
+      : lesson.reading?.status === "processing"
+        ? "朗读视频正在准备，请稍候…"
+        : lesson.reading?.status === "error"
+          ? "朗读视频处理失败，系统会自动重试。"
+          : "朗读视频源暂时不可用，请稍后重试。";
   return (
     <main className="page classroom">
       <div className="breadcrumb">
@@ -785,35 +867,108 @@ function Classroom({
       </div>
       <div className="classroom-grid">
         <section className="watch-column">
-          <Player
-            key={lesson.id}
-            lesson={lesson}
-            progress={progress.lessons[lesson.id]}
-            update={update}
-            autoplay={autoplay}
-            onEnded={() => {
-              if (continuous && course.lessons[index + 1])
-                select(course.lessons[index + 1].id);
-            }}
-          />
+          {lesson.reading && (
+            <div className="player-modes" role="group" aria-label="视频类型">
+              <button
+                className={!isReading ? "selected" : ""}
+                aria-pressed={!isReading}
+                onClick={() => {
+                  setMode("lecture");
+                  try {
+                    localStorage.setItem("firstleap.player-mode.v1", "lecture");
+                  } catch {
+                    /* Playback remains available. */
+                  }
+                }}
+              >
+                课程讲解
+              </button>
+              <button
+                className={isReading ? "selected" : ""}
+                aria-pressed={isReading}
+                onClick={() => {
+                  setMode("reading");
+                  try {
+                    localStorage.setItem("firstleap.player-mode.v1", "reading");
+                  } catch {
+                    /* Playback remains available. */
+                  }
+                }}
+              >
+                美音朗读
+              </button>
+              <span>Lesson {lesson.reading.number} 课文朗读</span>
+            </div>
+          )}
+          {isReading && !readingReady ? (
+            <div className="reading-placeholder" role="status">
+              <BookOpen size={30} />
+              <p>{readingMessage}</p>
+              <button
+                className="button"
+                onClick={() => {
+                  setMode("lecture");
+                  try {
+                    localStorage.setItem("firstleap.player-mode.v1", "lecture");
+                  } catch {
+                    /* Optional preference. */
+                  }
+                }}
+              >
+                观看课程讲解
+              </button>
+            </div>
+          ) : (
+            <Player
+              key={`${lesson.id}:${isReading ? "reading" : "lecture"}`}
+              reading={isReading}
+              progressID={activeID}
+              lesson={lesson}
+              progress={activeProgress}
+              update={activeUpdate}
+              autoplay={autoplay}
+              onEnded={() => {
+                if (continuous && course.lessons[index + 1])
+                  select(course.lessons[index + 1].id);
+              }}
+            />
+          )}
+          {readingStorageError && (
+            <p role="alert">
+              浏览器无法保存朗读进度，请检查存储空间或隐私设置。
+            </p>
+          )}
           <div className="watch-heading">
             <div>
               <span className="eyebrow">{lesson.label.toUpperCase()}</span>
               <h1>{lesson.title}</h1>
               <p>
-                <span className="teacher-avatar">霍</span>霍娜老师
-                <span className="dot-separator">·</span>新东方
+                {isReading ? (
+                  `Lesson ${lesson.reading!.number} · 美音朗读`
+                ) : (
+                  <>
+                    <span className="teacher-avatar">霍</span>霍娜老师
+                    <span className="dot-separator">·</span>新东方
+                  </>
+                )}
                 <span className="dot-separator">·</span>
-                {lesson.duration ? time(lesson.duration) : "课程视频"}
+                {isReading
+                  ? lesson.reading!.duration
+                    ? time(lesson.reading!.duration)
+                    : "课文视频"
+                  : lesson.duration
+                    ? time(lesson.duration)
+                    : "课程视频"}
               </p>
             </div>
             <button
               className={`complete-button ${completed ? "is-complete" : ""}`}
+              disabled={isReading && !readingReady}
               aria-pressed={Boolean(completed)}
               onClick={() =>
-                update(lesson.id, {
+                activeUpdate(activeID, {
                   completed: !completed,
-                  position: progress.lessons[lesson.id]?.position || 0,
+                  position: activeProgress?.position || 0,
                 })
               }
             >
