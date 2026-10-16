@@ -2449,3 +2449,30 @@ html {
   .player-modes span { width: 100%; margin-left: 0; }
   .player-modes button { flex: 1; }
 }
+
+.seek-tools {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+  padding: 12px 0;
+}
+.seek-tools.reading-seek { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.seek-tools button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f4f6ee;
+  color: #315744;
+  font: inherit;
+  cursor: pointer;
+}
+.seek-tools button:disabled { opacity: .45; cursor: not-allowed; }
+.seek-tools button:focus-visible { outline: 2px solid #315744; outline-offset: 2px; }
+.reading-loop-control { display: flex; align-items: center; gap: 10px; min-height: 44px; color: #315744; cursor: pointer; }
+.reading-loop-control input { width: 18px; height: 18px; accent-color: #315744; }
+.replay-notice { font-size: 14px; color: #315744; }
+@media (max-width: 800px) {
+  .seek-tools.lecture-seek { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

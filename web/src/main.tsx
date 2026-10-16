@@ -609,6 +609,8 @@ function Player({
   autoplay,
   reading = false,
   progressID = lesson.id,
+  loopReading = false,
+  onLoopChange,
 }: {
   lesson: Lesson;
   progress?: LessonProgress;
@@ -617,12 +619,17 @@ function Player({
   autoplay: boolean;
   reading?: boolean;
   progressID?: string;
+  loopReading?: boolean;
+  onLoopChange?: (enabled: boolean) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const saved = useRef(progress);
   const updateRef = useRef(update);
   updateRef.current = update;
   const lastSave = useRef(0);
+  const pausedEndSeek = useRef(false);
+  const [seekReady, setSeekReady] = useState(false);
+  const [replayBlocked, setReplayBlocked] = useState(false);
   const [rate, setRate] = useState(1);
   const [error, setError] = useState(false);
   const [waiting, setWaiting] = useState(false);
@@ -657,6 +664,14 @@ function Player({
         true,
       );
   };
+  const seek = (offset: number) => {
+    const el = video.current;
+    if (!el || !seekReady || error || !Number.isFinite(el.duration)) return;
+    const target = Math.max(0, Math.min(el.duration, el.currentTime + offset));
+    pausedEndSeek.current = el.paused && target >= el.duration;
+    el.currentTime = target;
+    persist();
+  };
   return (
     <>
       <div className={`video-shell ${reading ? "reading-video" : ""}`}>
@@ -681,7 +696,15 @@ function Player({
               el.currentTime = resumePosition(saved.current, el.duration);
               el.playbackRate = rate;
             }
+            setSeekReady(
+              Boolean(el && Number.isFinite(el.duration) && el.duration > 0),
+            );
             setError(false);
+          }}
+          onEmptied={() => setSeekReady(false)}
+          onPlay={() => {
+            pausedEndSeek.current = false;
+            setReplayBlocked(false);
           }}
           onTimeUpdate={() => {
             if (Date.now() - lastSave.current >= 5000) {
@@ -716,6 +739,15 @@ function Player({
               },
               true,
             );
+            if (pausedEndSeek.current) return;
+            if (reading && loopReading && el) {
+              el.currentTime = 0;
+              persist();
+              void el.play().catch(() => {
+                if (el.isConnected) setReplayBlocked(true);
+              });
+              return;
+            }
             onEnded();
           }}
         />
@@ -743,6 +775,41 @@ function Player({
           </div>
         )}
       </div>
+      <div
+        className={`seek-tools ${reading ? "reading-seek" : "lecture-seek"}`}
+        role="group"
+        aria-label="快捷跳转"
+      >
+        {(reading ? [-10, -5, 5, 10] : [-30, -15, -10, -5, 5, 10, 15, 30]).map(
+          (offset) => (
+            <button
+              key={offset}
+              type="button"
+              disabled={!seekReady || error}
+              aria-label={`${offset < 0 ? "快退" : "快进"} ${Math.abs(offset)} 秒`}
+              onClick={() => seek(offset)}
+            >
+              {offset > 0 ? "+" : "−"}
+              {Math.abs(offset)}s
+            </button>
+          ),
+        )}
+      </div>
+      {reading && (
+        <label className="reading-loop-control">
+          <input
+            type="checkbox"
+            checked={loopReading}
+            onChange={(e) => onLoopChange?.(e.target.checked)}
+          />
+          循环当前视频
+        </label>
+      )}
+      {replayBlocked && (
+        <p className="replay-notice" role="status">
+          已回到开头，点击播放即可继续循环。
+        </p>
+      )}
       <div className="player-tools">
         <span>
           <Volume2 size={15} />
@@ -789,6 +856,22 @@ function Classroom({
   autoplay: boolean;
 }) {
   const [continuous, setContinuous] = useState(false);
+  const [loopReading, setLoopReading] = useState(() => {
+    try {
+      return localStorage.getItem("firstleap.reading.loop.v1") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const changeLoop = (enabled: boolean) => {
+    setLoopReading(enabled);
+    if (enabled) setContinuous(false);
+    try {
+      localStorage.setItem("firstleap.reading.loop.v1", String(enabled));
+    } catch {
+      /* Preference remains usable for this session. */
+    }
+  };
   const index = course.lessons.findIndex((l) => l.id === lesson.id);
   const [mode, setMode] = useState(() => {
     try {
@@ -840,6 +923,9 @@ function Classroom({
     [],
   );
   const isReading = mode === "reading" && Boolean(lesson.reading);
+  useEffect(() => {
+    if (isReading && loopReading) setContinuous(false);
+  }, [isReading, loopReading]);
   const activeID = isReading ? lesson.reading!.id : lesson.id;
   const activeProgress = isReading
     ? readingProgress.lessons[activeID]
@@ -924,6 +1010,8 @@ function Classroom({
             <Player
               key={`${lesson.id}:${isReading ? "reading" : "lecture"}`}
               reading={isReading}
+              loopReading={isReading && loopReading}
+              onLoopChange={changeLoop}
               progressID={activeID}
               lesson={lesson}
               progress={activeProgress}
@@ -993,7 +1081,10 @@ function Classroom({
               <input
                 type="checkbox"
                 checked={continuous}
-                onChange={(e) => setContinuous(e.target.checked)}
+                onChange={(e) => {
+                  setContinuous(e.target.checked);
+                  if (isReading && e.target.checked) changeLoop(false);
+                }}
               />
               <span className="toggle" />
               连续播放
