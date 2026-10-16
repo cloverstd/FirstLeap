@@ -1146,86 +1146,6 @@ html {
   align-items: start;
   margin-bottom: 65px;
 }
-.video-shell {
-  position: relative;
-  aspect-ratio: 16/9;
-  border-radius: 7px 7px 0 0;
-  overflow: hidden;
-  background: #18271f;
-}
-.video-shell video {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.video-loading {
-  position: absolute;
-  inset: 0 0 48px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: center;
-  background: #13251a45;
-  color: #e6ebdd;
-  font-size: 12px;
-  pointer-events: none;
-}
-.video-error {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  background: #1d3026;
-  color: #bac9af;
-  padding: 20px;
-  text-align: center;
-}
-.video-error h3 {
-  font-size: 18px;
-  font-weight: 400;
-  color: #e2e9d9;
-  margin-bottom: 4px;
-}
-.video-error p {
-  font-size: 12px;
-}
-.video-error .button {
-  border: 1px solid #6c8060;
-  margin-top: 9px;
-  min-height: 38px;
-}
-.player-tools {
-  background: #eaf0e2;
-  border: 1px solid #dfe6d6;
-  border-top: 0;
-  padding: 11px 15px;
-  border-radius: 0 0 6px 6px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: #7d8c6d;
-  font-size: 10px;
-}
-.player-tools > span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.player-tools label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.player-tools select {
-  background: #f7f9f2;
-  border: 1px solid #d6dfca;
-  padding: 4px 8px;
-  border-radius: 3px;
-  color: #567044;
-  font-size: 11px;
-}
 .watch-heading {
   display: flex;
   align-items: center;
@@ -2295,17 +2215,6 @@ html {
     padding: 8px 10px;
     font-size: 10px;
   }
-  .video-shell {
-    border-radius: 5px 5px 0 0;
-  }
-  .player-tools {
-    font-size: 9px;
-    padding: 9px 10px;
-  }
-  .player-tools select {
-    font-size: 10px;
-    padding: 3px 5px;
-  }
   .lesson-navigation {
     gap: 10px;
     padding: 20px 0;
@@ -2431,8 +2340,6 @@ html {
 }
 .player-modes button.selected { background: #315744; color: #fff; border-color: #315744; }
 .player-modes span { font-size: 12px; color: #667369; margin-left: auto; }
-.video-shell.reading-video { aspect-ratio: 4 / 3; }
-.video-shell.reading-video video { width: 100%; height: 100%; object-fit: contain; }
 .reading-placeholder {
   min-height: 260px;
   display: flex;
@@ -2448,31 +2355,4 @@ html {
 @media (max-width: 560px) {
   .player-modes span { width: 100%; margin-left: 0; }
   .player-modes button { flex: 1; }
-}
-
-.seek-tools {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 6px;
-  padding: 12px 0;
-}
-.seek-tools.reading-seek { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.seek-tools button {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 8px 4px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #f4f6ee;
-  color: #315744;
-  font: inherit;
-  cursor: pointer;
-}
-.seek-tools button:disabled { opacity: .45; cursor: not-allowed; }
-.seek-tools button:focus-visible { outline: 2px solid #315744; outline-offset: 2px; }
-.reading-loop-control { display: flex; align-items: center; gap: 10px; min-height: 44px; color: #315744; cursor: pointer; }
-.reading-loop-control input { width: 18px; height: 18px; accent-color: #315744; }
-.replay-notice { font-size: 14px; color: #315744; }
-@media (max-width: 800px) {
-  .seek-tools.lecture-seek { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

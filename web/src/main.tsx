@@ -16,7 +16,6 @@ import {
   ListVideo,
   LoaderCircle,
   Play,
-  RotateCcw,
   Search,
   Sparkles,
   Volume2,
@@ -25,12 +24,12 @@ import {
 import {
   loadProgress,
   READING_STORAGE_KEY,
-  resumePosition,
   saveProgress,
   type LessonProgress,
   type Progress,
 } from "./progress";
 import "./styles.css";
+import { LearningPlayer } from "./LearningPlayer";
 
 type Lesson = {
   id: string;
@@ -601,243 +600,6 @@ function Overview({
   );
 }
 
-function Player({
-  lesson,
-  progress,
-  update,
-  onEnded,
-  autoplay,
-  reading = false,
-  progressID = lesson.id,
-  loopReading = false,
-  onLoopChange,
-}: {
-  lesson: Lesson;
-  progress?: LessonProgress;
-  update: UpdateProgress;
-  onEnded: () => void;
-  autoplay: boolean;
-  reading?: boolean;
-  progressID?: string;
-  loopReading?: boolean;
-  onLoopChange?: (enabled: boolean) => void;
-}) {
-  const video = useRef<HTMLVideoElement>(null);
-  const saved = useRef(progress);
-  const updateRef = useRef(update);
-  updateRef.current = update;
-  const lastSave = useRef(0);
-  const pausedEndSeek = useRef(false);
-  const [seekReady, setSeekReady] = useState(false);
-  const [replayBlocked, setReplayBlocked] = useState(false);
-  const [rate, setRate] = useState(1);
-  const [error, setError] = useState(false);
-  const [waiting, setWaiting] = useState(false);
-  useEffect(() => {
-    const el = video.current;
-    const persist = () => {
-      if (el && Number.isFinite(el.duration) && el.currentTime > 0)
-        updateRef.current(
-          progressID,
-          { position: el.currentTime, duration: el.duration },
-          true,
-        );
-    };
-    const visibility = () => {
-      if (document.visibilityState === "hidden") persist();
-    };
-    window.addEventListener("pagehide", persist);
-    document.addEventListener("visibilitychange", visibility);
-    return () => {
-      persist();
-      el?.pause();
-      window.removeEventListener("pagehide", persist);
-      document.removeEventListener("visibilitychange", visibility);
-    };
-  }, [progressID]);
-  const persist = () => {
-    const el = video.current;
-    if (el && Number.isFinite(el.duration))
-      update(
-        progressID,
-        { position: el.currentTime, duration: el.duration },
-        true,
-      );
-  };
-  const seek = (offset: number) => {
-    const el = video.current;
-    if (!el || !seekReady || error || !Number.isFinite(el.duration)) return;
-    const target = Math.max(0, Math.min(el.duration, el.currentTime + offset));
-    pausedEndSeek.current = el.paused && target >= el.duration;
-    el.currentTime = target;
-    persist();
-  };
-  return (
-    <>
-      <div className={`video-shell ${reading ? "reading-video" : ""}`}>
-        <video
-          ref={video}
-          controls
-          playsInline
-          preload="metadata"
-          autoPlay={autoplay}
-          poster={
-            !reading && lesson.thumbnail
-              ? `/api/lessons/${lesson.id}/thumbnail`
-              : undefined
-          }
-          src={`/api/lessons/${lesson.id}/${reading ? "reading/" : ""}video`}
-          aria-label={
-            reading ? `Lesson ${lesson.reading?.number} 美音朗读` : lesson.title
-          }
-          onLoadedMetadata={() => {
-            const el = video.current;
-            if (el) {
-              el.currentTime = resumePosition(saved.current, el.duration);
-              el.playbackRate = rate;
-            }
-            setSeekReady(
-              Boolean(el && Number.isFinite(el.duration) && el.duration > 0),
-            );
-            setError(false);
-          }}
-          onEmptied={() => setSeekReady(false)}
-          onPlay={() => {
-            pausedEndSeek.current = false;
-            setReplayBlocked(false);
-          }}
-          onTimeUpdate={() => {
-            if (Date.now() - lastSave.current >= 5000) {
-              persist();
-              lastSave.current = Date.now();
-            }
-          }}
-          onSeeked={persist}
-          onPause={persist}
-          onWaiting={() => setWaiting(true)}
-          onPlaying={() => {
-            setWaiting(false);
-            setError(false);
-          }}
-          onCanPlay={() => setWaiting(false)}
-          onError={() => {
-            setError(true);
-            setWaiting(false);
-          }}
-          onEnded={() => {
-            const el = video.current;
-            update(
-              progressID,
-              {
-                completed: true,
-                position:
-                  el?.duration ||
-                  (reading ? lesson.reading?.duration || 0 : lesson.duration),
-                duration:
-                  el?.duration ||
-                  (reading ? lesson.reading?.duration || 0 : lesson.duration),
-              },
-              true,
-            );
-            if (pausedEndSeek.current) return;
-            if (reading && loopReading && el) {
-              el.currentTime = 0;
-              persist();
-              void el.play().catch(() => {
-                if (el.isConnected) setReplayBlocked(true);
-              });
-              return;
-            }
-            onEnded();
-          }}
-        />
-        {waiting && !error && (
-          <div className="video-loading" role="status">
-            <LoaderCircle className="spin" size={26} />
-            <span>正在缓冲…</span>
-          </div>
-        )}
-        {error && (
-          <div className="video-error" role="alert">
-            <WifiOff size={30} />
-            <h3>视频暂时无法播放</h3>
-            <p>请检查连接后重试，学习进度已为你保留。</p>
-            <button
-              className="button"
-              onClick={() => {
-                setError(false);
-                video.current?.load();
-              }}
-            >
-              <RotateCcw size={16} />
-              重新加载
-            </button>
-          </div>
-        )}
-      </div>
-      <div
-        className={`seek-tools ${reading ? "reading-seek" : "lecture-seek"}`}
-        role="group"
-        aria-label="快捷跳转"
-      >
-        {(reading ? [-10, -5, 5, 10] : [-30, -15, -10, -5, 5, 10, 15, 30]).map(
-          (offset) => (
-            <button
-              key={offset}
-              type="button"
-              disabled={!seekReady || error}
-              aria-label={`${offset < 0 ? "快退" : "快进"} ${Math.abs(offset)} 秒`}
-              onClick={() => seek(offset)}
-            >
-              {offset > 0 ? "+" : "−"}
-              {Math.abs(offset)}s
-            </button>
-          ),
-        )}
-      </div>
-      {reading && (
-        <label className="reading-loop-control">
-          <input
-            type="checkbox"
-            checked={loopReading}
-            onChange={(e) => onLoopChange?.(e.target.checked)}
-          />
-          循环当前视频
-        </label>
-      )}
-      {replayBlocked && (
-        <p className="replay-notice" role="status">
-          已回到开头，点击播放即可继续循环。
-        </p>
-      )}
-      <div className="player-tools">
-        <span>
-          <Volume2 size={15} />
-          跟随自己的节奏
-        </span>
-        <label>
-          播放速度
-          <select
-            aria-label="播放速度"
-            value={rate}
-            onChange={(e) => {
-              const speed = Number(e.target.value);
-              setRate(speed);
-              if (video.current) video.current.playbackRate = speed;
-            }}
-          >
-            {[0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => (
-              <option key={speed} value={speed}>
-                {speed}×
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-    </>
-  );
-}
-
 function Classroom({
   course,
   lesson,
@@ -1007,13 +769,20 @@ function Classroom({
               </button>
             </div>
           ) : (
-            <Player
+            <LearningPlayer
               key={`${lesson.id}:${isReading ? "reading" : "lecture"}`}
               reading={isReading}
               loopReading={isReading && loopReading}
               onLoopChange={changeLoop}
               progressID={activeID}
-              lesson={lesson}
+              source={`/api/lessons/${lesson.id}/${isReading ? "reading/" : ""}video`}
+              poster={!isReading && lesson.thumbnail ? `/api/lessons/${lesson.id}/thumbnail` : undefined}
+              title={isReading ? `Lesson ${lesson.reading?.number} 美音朗读` : lesson.title}
+              continuous={continuous}
+              onContinuousChange={(enabled) => {
+                setContinuous(enabled);
+                if (isReading && enabled) changeLoop(false);
+              }}
               progress={activeProgress}
               update={activeUpdate}
               autoplay={autoplay}
@@ -1077,18 +846,6 @@ function Classroom({
                 {course.lessons[index - 1]?.label || "这是第一节课"}
               </span>
             </button>
-            <label className="continuous-label">
-              <input
-                type="checkbox"
-                checked={continuous}
-                onChange={(e) => {
-                  setContinuous(e.target.checked);
-                  if (isReading && e.target.checked) changeLoop(false);
-                }}
-              />
-              <span className="toggle" />
-              连续播放
-            </label>
             <button
               disabled={index === course.lessons.length - 1}
               onClick={() => select(course.lessons[index + 1].id)}

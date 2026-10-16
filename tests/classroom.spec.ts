@@ -71,15 +71,16 @@ test("catalog search, lesson navigation and saved completion", async ({
     "aria-pressed",
     "true",
   );
-  await page.getByRole("combobox", { name: "播放速度" }).selectOption("1.5");
+  await page.getByRole("button", { name: "播放速度", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "1.5×", exact: true }).click();
   expect(
     await page
       .locator("video")
       .evaluate((el: HTMLVideoElement) => el.playbackRate),
   ).toBe(1.5);
   await expect(
-    page.getByRole("checkbox", { name: "连续播放" }),
-  ).not.toBeChecked();
+    page.getByRole("switch", { name: "连续播放" }),
+  ).toHaveAttribute("aria-checked", "false");
   await page.getByRole("button", { name: "上一节 Lesson 1 & 2" }).click();
   await expect(page).toHaveURL(/\/learn\/lesson1$/);
   await page.getByRole("button", { name: "我的课堂", exact: true }).click();
@@ -241,7 +242,7 @@ test("reading switch restores separate progress and preserves lecture completion
       .locator("video")
       .evaluate((el: HTMLVideoElement) => el.currentTime),
   ).toBe(6);
-  const bounds = await page.locator(".reading-video").boundingBox();
+  const bounds = await page.locator(".is-reading .player-stage").boundingBox();
   expect(bounds!.width / bounds!.height).toBeCloseTo(4 / 3, 1);
   await page
     .locator("video")
@@ -330,7 +331,7 @@ test("missing reading stops continuous playback without selecting another file",
   );
   await page.goto("/learn/lesson1");
   await page.getByRole("button", { name: "美音朗读", exact: true }).click();
-  await page.getByRole("checkbox", { name: "连续播放" }).check();
+  await page.getByRole("switch", { name: "连续播放" }).click();
   await page
     .locator("video")
     .evaluate((el) => el.dispatchEvent(new Event("ended")));
@@ -476,17 +477,18 @@ test("reading loops twice, retains speed, excludes continuous and restores prefe
   );
   await page.goto("/learn/lesson1");
   await expect(
-    page.getByRole("checkbox", { name: "循环当前视频" }),
+    page.getByRole("switch", { name: "循环当前视频" }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "美音朗读", exact: true }).click();
   await metadata(page, 16);
-  const loop = page.getByRole("checkbox", { name: "循环当前视频" });
-  const continuous = page.getByRole("checkbox", { name: "连续播放" });
-  await expect(loop).not.toBeChecked();
-  await continuous.check();
-  await loop.check();
-  await expect(continuous).not.toBeChecked();
-  await page.getByRole("combobox", { name: "播放速度" }).selectOption("1.5");
+  const loop = page.getByRole("switch", { name: "循环当前视频" });
+  const continuous = page.getByRole("switch", { name: "连续播放" });
+  await expect(loop).toHaveAttribute("aria-checked", "false");
+  await continuous.click();
+  await loop.click();
+  await expect(continuous).toHaveAttribute("aria-checked", "false");
+  await page.getByRole("button", { name: "播放速度", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "1.5×", exact: true }).click();
   await page.locator("video").evaluate((v: HTMLVideoElement) => {
     v.play = () => Promise.resolve();
   });
@@ -512,7 +514,7 @@ test("reading loops twice, retains speed, excludes continuous and restores prefe
     "true",
   );
   await page.reload();
-  await expect(loop).toBeChecked();
+  await expect(loop).toHaveAttribute("aria-checked", "true");
   await metadata(page, 16);
   // Seeking to the end while paused must not start playback or advance the course.
   await page.locator("video").evaluate((v: HTMLVideoElement) => {
@@ -527,21 +529,21 @@ test("reading loops twice, retains speed, excludes continuous and restores prefe
       .locator("video")
       .evaluate((v: HTMLVideoElement) => v.currentTime),
   ).toBe(16);
-  await continuous.check();
-  await expect(loop).not.toBeChecked();
-  await loop.check();
+  await continuous.click();
+  await expect(loop).toHaveAttribute("aria-checked", "false");
+  await loop.click();
   await page.getByRole("button", { name: "课程讲解", exact: true }).click();
-  await continuous.check();
+  await continuous.click();
   await page.getByRole("button", { name: "美音朗读", exact: true }).click();
-  await expect(loop).toBeChecked();
-  await expect(continuous).not.toBeChecked();
+  await expect(loop).toHaveAttribute("aria-checked", "true");
+  await expect(continuous).toHaveAttribute("aria-checked", "false");
   await metadata(page, 16);
   await page.locator("video").evaluate((v: HTMLVideoElement) => {
     v.play = () => Promise.reject(new Error("autoplay blocked"));
     v.dispatchEvent(new Event("ended"));
   });
   await expect(page.getByRole("status")).toContainText("点击播放即可继续循环");
-  await loop.uncheck();
+  await loop.click();
   await page.reload();
-  await expect(loop).not.toBeChecked();
+  await expect(loop).toHaveAttribute("aria-checked", "false");
 });
