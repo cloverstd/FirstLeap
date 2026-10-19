@@ -11,7 +11,7 @@ import re
 import subprocess
 
 
-def validate(root, decode=False):
+def validate(root, decode=False, require_translations=False):
     errors, warnings = [], []
     counts = Counter()
     pronunciation_ids = set()
@@ -48,6 +48,10 @@ def validate(root, decode=False):
             seen = set()
             for sentence in sentences:
                 counts["sentences"] += 1
+                if isinstance(sentence.get("translationZh"), str) and sentence["translationZh"].strip():
+                    counts["sentenceTranslations"] += 1
+                elif require_translations:
+                    errors.append(f"{prefix}/{sentence['id']}: missing sentence translation")
                 start, end = sentence["start"], sentence["end"]
                 if not valid_range(start, end, lesson["duration"]):
                     errors.append(f"{prefix}/{sentence['id']}: invalid sentence range")
@@ -138,8 +142,9 @@ if __name__ == "__main__":
         action="store_true",
         help="Also probe every generated vocabulary MP3",
     )
+    parser.add_argument("--require-sentence-translations", action="store_true")
     args = parser.parse_args()
-    report = validate(args.data / "textbooks/library", args.decode)
+    report = validate(args.data / "textbooks/library", args.decode, args.require_sentence_translations)
     target = args.data / "textbooks/library/reports/validation.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(report, ensure_ascii=False, indent=2))

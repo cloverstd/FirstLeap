@@ -2,18 +2,58 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   ArrowLeft,
   BookOpen,
+  Check,
+  CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
   Headphones,
+  Languages,
   Pause,
   Play,
   Repeat,
+  RotateCcw,
   Volume2,
 } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { claimMedia, MEDIA_EVENT } from "./mediaCoordinator";
-import { RATES, readPosition, writePosition } from "./textbookProgress";
-import "./textbooks.css";
+import {
+  RATES,
+  lastLessonInBook,
+  readPosition,
+  useTextbookProgress,
+  writePosition,
+  type MarkerMode,
+  type ReadingPosition,
+} from "./textbookProgress";
+import { TextbookTimeline } from "./TextbookTimeline";
+import { audioClock as clock } from "./textbookMarkers";
 
 export type TextWord = {
   id: string;
@@ -25,11 +65,12 @@ export type TextWord = {
 export type TextSentence = {
   id: string;
   text: string;
+  translationZh?: string;
   start: number | null;
   end: number | null;
   words: TextWord[];
 };
-type TextLesson = {
+export type TextLesson = {
   book: number;
   lesson: number;
   label: string;
@@ -83,9 +124,9 @@ type Source = {
   offset: number;
   id: string;
 };
+type LoopMode = "off" | "lesson" | "selection";
 const bookNames = ["", "英语初阶", "实践与进步", "培养技能", "流利英语"];
-const clock = (s: number) =>
-  `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, "0")}`;
+const numerals = ["", "一", "二", "三", "四"];
 export function navigateBook(path: string) {
   history.pushState({}, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
@@ -95,13 +136,14 @@ function Link({
   to,
   children,
   className,
-}: {
-  to: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...props
+}: { to: string; children: React.ReactNode; className?: string } & Omit<
+  React.AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href"
+>) {
   return (
     <a
+      {...props}
       href={to}
       className={className}
       onClick={(e) => {
@@ -144,22 +186,93 @@ function useResource<T>(url: string) {
 }
 function Loading({ error, retry }: { error: string; retry: () => void }) {
   return (
-    <div className="textbook-state" role="status">
-      <BookOpen size={32} />
+    <div
+      className="flex min-h-72 flex-col items-center justify-center gap-4 py-16 text-muted-foreground"
+      role="status"
+    >
+      <BookOpen className="size-8" />
       <p>{error || "正在打开课本…"}</p>
       {error && (
-        <button className="button outlined" onClick={retry}>
+        <Button variant="outline" onClick={retry}>
           重新加载
-        </button>
+        </Button>
       )}
     </div>
   );
 }
-
+function BookProgress({ book, total }: { book: number; total: number }) {
+  const progress = useTextbookProgress();
+  const done = Object.entries(progress.lessons).filter(([key, item]) => {
+    const [b, n] = key.split(":").map(Number);
+    return (
+      b === book &&
+      item.completed &&
+      n >= 1 &&
+      (book === 1 ? n <= 143 && n % 2 === 1 : n <= [0, 0, 96, 60, 48][book])
+    );
+  }).length;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="space-y-2" aria-label={`第${numerals[book]}册学习进度`}>
+      <div className="flex justify-between gap-4 text-xs text-muted-foreground">
+        <span>
+          已学 <strong className="text-primary">{done}</strong> / {total} 课
+        </span>
+        <span>{percent}%</span>
+      </div>
+      <Progress
+        aria-label={`第${numerals[book]}册完成度`}
+        value={percent}
+        className="h-1.5"
+      />
+    </div>
+  );
+}
+function CompletionButton({
+  lessonKey,
+  duration,
+  className,
+}: {
+  lessonKey: string;
+  duration: number;
+  className?: string;
+}) {
+  const progress = useTextbookProgress();
+  const [failed, setFailed] = useState(false);
+  const completed = progress.lessons[lessonKey]?.completed || false;
+  return (
+    <div className={className}>
+      <Button
+        variant={completed ? "secondary" : "outline"}
+        size="sm"
+        aria-label={`第${numerals[Number(lessonKey.split(":")[0])]}册第${lessonKey.split(":")[1]}课，${completed ? "标记未学" : "标记已学"}`}
+        aria-pressed={completed}
+        className="min-h-11 gap-1.5 whitespace-nowrap"
+        onClick={() =>
+          setFailed(
+            !writePosition(lessonKey, { completed: !completed, duration }),
+          )
+        }
+      >
+        {completed ? (
+          <CheckCircle2 className="size-4" />
+        ) : (
+          <Check className="size-4" />
+        )}
+        {completed ? "已学 · 标记未学" : "标记已学"}
+      </Button>
+      {failed && (
+        <p role="status" className="mt-1 text-xs text-destructive">
+          当前浏览器无法保存进度
+        </p>
+      )}
+    </div>
+  );
+}
 export function Textbooks({ pathname }: { pathname: string }) {
   const parts = pathname.split("/").filter(Boolean);
-  const book = Number(parts[1]);
-  const lesson = Number(parts[3]);
+  const book = Number(parts[1]),
+    lesson = Number(parts[3]);
   const validLesson =
     Number.isInteger(lesson) &&
     lesson >= 1 &&
@@ -174,7 +287,7 @@ export function Textbooks({ pathname }: { pathname: string }) {
         (parts.length === 4 && parts[2] === "lessons" && validLesson)));
   if (!valid)
     return (
-      <main className="page">
+      <main className="mx-auto max-w-7xl px-4 sm:px-8">
         <Loading
           error="没有找到这本教材或课文"
           retry={() => navigateBook("/books")}
@@ -182,23 +295,29 @@ export function Textbooks({ pathname }: { pathname: string }) {
       </main>
     );
   return (
-    <main className="page textbook-page">
-      <div className="breadcrumb">
-        <Link to="/books">
-          <BookOpen size={15} />
+    <main className="page textbook-page mx-auto max-w-7xl px-4 pb-12 sm:px-8 lg:px-12">
+      <nav
+        aria-label="面包屑"
+        className="breadcrumb my-6 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+      >
+        <Link
+          to="/books"
+          className="inline-flex items-center gap-1.5 hover:text-primary"
+        >
+          <BookOpen className="size-3.5" />
           电子书
         </Link>
         {book > 0 && (
           <>
-            <ChevronRight size={14} />
+            <ChevronRight className="size-3" />
             <Link to={`/books/${book}`}>
-              第{["", "一", "二", "三", "四"][book]}册 · {bookNames[book]}
+              第{numerals[book]}册 · {bookNames[book]}
             </Link>
           </>
         )}
         {lesson > 0 && (
           <>
-            <ChevronRight size={14} />
+            <ChevronRight className="size-3" />
             <span>
               {book === 1
                 ? `Lesson ${lesson} & ${lesson + 1}`
@@ -206,7 +325,7 @@ export function Textbooks({ pathname }: { pathname: string }) {
             </span>
           </>
         )}
-      </div>
+      </nav>
       {lesson > 0 ? (
         <TextbookLesson key={`${book}:${lesson}`} book={book} lesson={lesson} />
       ) : book > 0 ? (
@@ -219,101 +338,217 @@ export function Textbooks({ pathname }: { pathname: string }) {
 }
 function Bookshelf() {
   const { value: books, error, retry } = useResource<Book[]>("/api/books");
+  const progress = useTextbookProgress();
   if (!books) return <Loading error={error} retry={retry} />;
   return (
     <>
-      <div className="textbook-intro">
-        <span className="eyebrow">READ. LISTEN. UNDERSTAND.</span>
-        <h1>让每一个词，都听得清楚。</h1>
-        <p>从第一句问候开始，点读、精听，在熟悉的课文里积累表达。</p>
+      <header className="my-10 space-y-4 sm:my-14">
+        <Badge variant="secondary" className="gap-1.5 px-3 py-1.5">
+          <BookOpen className="size-3.5" />
+          我的随身课本
+        </Badge>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+          把熟悉的课文，读成自己的表达。
+        </h1>
+        <p className="text-muted-foreground">
+          从第一句问候开始。点读、精听，每一课都留下进步。
+        </p>
+      </header>
+      <div className="bookshelf grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {books.map((b) => {
+          const last = lastLessonInBook(progress, b.book);
+          return (
+            <Card key={b.book} className="gap-0 overflow-hidden pt-0 shadow-sm">
+              <Link
+                to={`/books/${b.book}`}
+                className={cn(
+                  "textbook-cover group relative flex min-h-72 flex-col overflow-hidden bg-primary p-6 text-white transition-colors hover:bg-primary/95",
+                  ["", "", "bg-[#3e6559]", "bg-[#51674e]", "bg-[#3b5b58]"][
+                    b.book
+                  ],
+                )}
+              >
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 w-2 border-r border-white/10 bg-black/10"
+                />
+                <span className="text-[10px] tracking-[.18em] text-white/75">
+                  NEW CONCEPT ENGLISH
+                </span>
+                <strong className="my-5 font-serif text-7xl font-normal text-chalk">
+                  0{b.book}
+                </strong>
+                <h2 className="text-2xl font-medium">{bookNames[b.book]}</h2>
+                <p className="mt-2 font-serif text-sm text-white/75">
+                  {b.subtitleEn || "New Concept English"}
+                </p>
+                <span className="mt-6 flex items-center gap-2 border-t border-white/20 pt-4 text-xs text-white/85">
+                  <Headphones className="size-4" />
+                  {b.available
+                    ? `${b.lessonCount} 课 · 原音精听`
+                    : "教材正在准备"}
+                  <ChevronRight className="ml-auto size-4 transition-transform group-hover:translate-x-1" />
+                </span>
+              </Link>
+              <CardContent className="space-y-4 px-5 pt-5">
+                <BookProgress book={b.book} total={b.lessonCount} />
+                <Link
+                  to={
+                    last
+                      ? `/books/${b.book}/lessons/${last.split(":")[1]}`
+                      : `/books/${b.book}`
+                  }
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "sm" }),
+                    "w-full gap-2",
+                  )}
+                >
+                  <Play className="size-3.5" />
+                  {last ? `继续 Lesson ${last.split(":")[1]}` : "打开课本"}
+                </Link>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
-      <div className="bookshelf">
-        {books.map((b) => (
-          <Link
-            key={b.book}
-            to={`/books/${b.book}`}
-            className={`textbook-cover cover-${b.book}`}
-          >
-            <span>NEW CONCEPT ENGLISH</span>
-            <strong>0{b.book}</strong>
-            <h2>{bookNames[b.book]}</h2>
-            <p>{b.subtitleEn || "New Concept English"}</p>
-            <div>
-              <Headphones size={17} />
-              {b.available
-                ? `${b.lessonCount} 课 · 课文与美音精听`
-                : "教材正在准备"}
-              <ChevronRight size={18} />
-            </div>
-          </Link>
-        ))}
-      </div>
-      <p className="textbook-footnote">
-        学习记录保存在当前浏览器。第一册按课文合并展示相邻两课。
+      <p className="mt-6 text-xs leading-6 text-muted-foreground">
+        学习记录保存在当前浏览器。第一册按相邻两课组成一个学习单元。
       </p>
     </>
   );
 }
 function BookContents({ book }: { book: number }) {
   const { value, error, retry } = useResource<Book>(`/api/books/${book}`);
+  const progress = useTextbookProgress();
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
   if (!value) return <Loading error={error} retry={retry} />;
-  const lessons = value.lessons.filter((l) =>
-    `${l.label} ${l.titleEn} ${l.titleZh}`
-      .toLowerCase()
-      .includes(query.toLowerCase().trim()),
+  const lastKey = lastLessonInBook(progress, book);
+  const resume =
+    value.lessons.find((l) => `${book}:${l.lesson}` === lastKey) ||
+    value.lessons.find(
+      (l) => !progress.lessons[`${book}:${l.lesson}`]?.completed,
+    ) ||
+    value.lessons[0];
+  const lessons = value.lessons.filter(
+    (l) =>
+      `${l.label} ${l.titleEn} ${l.titleZh}`
+        .toLowerCase()
+        .includes(query.toLowerCase().trim()) &&
+      (filter === "all" ||
+        (filter === "completed"
+          ? progress.lessons[`${book}:${l.lesson}`]?.completed
+          : !progress.lessons[`${book}:${l.lesson}`]?.completed)),
   );
   return (
     <>
-      <div className="textbook-intro">
-        <span className="eyebrow">{value.subtitleEn}</span>
-        <h1>{value.name}</h1>
-        <p>{value.lessonCount} 课 · 原音点读 · 逐词跟随</p>
-      </div>
-      <div className="book-actions">
-        <input
+      <header className="my-10 space-y-3">
+        <p className="text-xs tracking-widest text-muted-foreground">
+          {value.subtitleEn}
+        </p>
+        <h1 className="text-3xl font-semibold sm:text-4xl">{value.name}</h1>
+        <p className="text-muted-foreground">
+          {value.lessonCount} 课 · 原音点读 · 逐词跟随
+        </p>
+      </header>
+      <Card className="mb-7 bg-white/70 shadow-none">
+        <CardContent className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="w-full sm:max-w-lg">
+            <BookProgress book={book} total={value.lessonCount} />
+          </div>
+          {resume && (
+            <Link
+              to={`/books/${book}/lessons/${resume.lesson}`}
+              className={cn(buttonVariants(), "gap-2")}
+            >
+              <Play className="size-4" />
+              {lastKey ? "继续学习" : "开始学习"} · Lesson {resume.lesson}
+            </Link>
+          )}
+        </CardContent>
+      </Card>
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <Input
+          className="h-11 w-full bg-card sm:max-w-xs"
           aria-label="搜索课文"
           placeholder="搜索课号或课文标题"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="book-downloads">
-          <Download size={16} />
+        <Tabs value={filter} onValueChange={setFilter}>
+          <TabsList>
+            <TabsTrigger value="all">全部</TabsTrigger>
+            <TabsTrigger value="unlearned">未学</TabsTrigger>
+            <TabsTrigger value="completed">已学</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <Download className="size-4" />
           {value.downloads.map((format) => (
-            <a key={format} href={`/api/books/${book}/downloads/${format}`}>
+            <a
+              className="py-3 hover:text-primary hover:underline"
+              key={format}
+              href={`/api/books/${book}/downloads/${format}`}
+            >
               {format.toUpperCase()}
             </a>
           ))}
         </div>
       </div>
-      <div className="textbook-contents">
+      <div className="textbook-contents grid gap-3 md:grid-cols-2">
         {lessons.map((l) => {
-          const progress = readPosition(`${book}:${l.lesson}`);
+          const saved = progress.lessons[`${book}:${l.lesson}`];
           return (
-            <Link
+            <Card
               key={l.lesson}
-              to={`/books/${book}/lessons/${l.lesson}`}
-              className="textbook-lesson-card"
+              className="flex-row flex-wrap items-center gap-2 py-2 pr-3 shadow-none transition-colors hover:border-primary/40"
             >
-              <span>{l.label}</span>
-              <div>
-                <h2>{l.titleEn}</h2>
-                <p>{l.titleZh}</p>
-              </div>
-              <small>
-                {progress.completed
-                  ? "已听完"
-                  : progress.position > 0
-                    ? `继续 · ${clock(progress.position)}`
-                    : clock(l.duration)}
-              </small>
-              <ChevronRight size={18} />
-            </Link>
+              <Link
+                to={`/books/${book}/lessons/${l.lesson}`}
+                className="textbook-lesson-card flex min-w-0 flex-1 items-center gap-3 p-4"
+              >
+                <span
+                  className={cn(
+                    "grid size-10 shrink-0 place-items-center rounded-xl bg-secondary text-xs font-semibold text-primary",
+                    saved?.completed && "bg-primary text-white",
+                  )}
+                >
+                  {saved?.completed ? (
+                    <Check className="size-4" />
+                  ) : (
+                    String(l.lesson).padStart(2, "0")
+                  )}
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {l.label}
+                  </span>
+                  <h2 className="truncate font-medium">{l.titleEn}</h2>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {l.titleZh}
+                  </p>
+                  <small className="block text-[11px] text-primary">
+                    {saved?.completed
+                      ? "已学"
+                      : saved?.position > 0
+                        ? `学习中 · ${clock(saved.position)} / ${clock(l.duration)}`
+                        : `${clock(l.duration)} · 未学`}
+                  </small>
+                </div>
+              </Link>
+              <CompletionButton
+                lessonKey={`${book}:${l.lesson}`}
+                duration={l.duration}
+                className="ml-auto"
+              />
+            </Card>
           );
         })}
       </div>
       {lessons.length === 0 && (
-        <p className="textbook-footnote">没有找到课文，换个关键词试试。</p>
+        <p className="py-12 text-center text-muted-foreground">
+          没有找到课文，换个关键词或筛选试试。
+        </p>
       )}
     </>
   );
@@ -343,7 +578,6 @@ export function TextbookLesson({
     />
   );
 }
-
 function ReadingRoom({
   lesson,
   embedded,
@@ -353,8 +587,9 @@ function ReadingRoom({
 }) {
   const base = `/api/books/${lesson.book}/lessons/${lesson.lesson}`;
   const key = `${lesson.book}:${lesson.lesson}`;
-  const [initialPosition] = useState(() => readPosition(key));
-  const saved = useRef(initialPosition);
+  const progress = useTextbookProgress();
+  const record = progress.lessons[key] || readPosition(key);
+  const [initial] = useState(() => readPosition(key));
   const audio = useRef<HTMLAudioElement>(null);
   const source = useRef<Source>({
     url: `${base}/audio`,
@@ -362,35 +597,32 @@ function ReadingRoom({
     offset: 0,
     id: "full",
   });
-  const generation = useRef(0);
-  // The user's play intent stays active during the gap between repeats.
-  const playIntent = useRef(false);
+  const generation = useRef(0),
+    playIntent = useRef(false),
+    switching = useRef(false),
+    manualEnd = useRef(false);
   const repeatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loopRef = useRef(false);
-  const rateRef = useRef(saved.current.rate);
+  const loopRef = useRef<LoopMode>("off"),
+    rateRef = useRef(initial.rate);
   const fullPosition = useRef(
-    saved.current.position >= lesson.duration - 0.2
-      ? 0
-      : saved.current.position,
+    initial.position >= lesson.duration - 0.2 ? 0 : initial.position,
   );
   const lastSave = useRef(0);
-  const [position, setPosition] = useState(fullPosition.current);
-  const [playing, setPlaying] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [loop, setLoop] = useState(false);
-  const [rate, setRate] = useState(rateRef.current);
-  const [selected, setSelected] = useState("");
-  const [kind, setKind] = useState<Source["kind"]>("full");
-  const [error, setError] = useState("");
-  const [storageError, setStorageError] = useState(false);
-  const [tab, setTab] = useState("passage");
-  const [follow, setFollow] = useState(true);
-  const [showTranslation, setShowTranslation] = useState(false);
+  const [position, setPosition] = useState(fullPosition.current),
+    [playing, setPlaying] = useState(false),
+    [running, setRunning] = useState(false);
+  const [loopMode, setLoopMode] = useState<LoopMode>("off"),
+    [rate, setRate] = useState(initial.rate);
+  const [selected, setSelected] = useState(""),
+    [kind, setKind] = useState<Source["kind"]>("full");
+  const [error, setError] = useState(""),
+    [storageError, setStorageError] = useState(false);
+  const [tab, setTab] = useState("passage"),
+    [follow, setFollow] = useState(true);
+  const [translations, setTranslations] = useState<Set<string>>(
+    () => new Set(),
+  );
   const sentences = lesson.paragraphs.flatMap((p) => p.sentences);
-  const instruction =
-    lesson.question && lesson.instruction.endsWith(lesson.question)
-      ? lesson.instruction.slice(0, -lesson.question.length).trim()
-      : lesson.instruction;
   const current = sentences.find(
     (s) =>
       s.start !== null &&
@@ -405,7 +637,7 @@ function ReadingRoom({
       position >= w.start &&
       position < w.end,
   );
-  const currentRef = useRef(current?.id || saved.current.sentence);
+  const currentRef = useRef(current?.id || initial.sentence);
   currentRef.current = current?.id || currentRef.current;
   const firstIndex = sentences.findIndex(
     (s) =>
@@ -413,9 +645,11 @@ function ReadingRoom({
       (current?.id ||
         (position >= (sentences[0]?.start ?? 0) ? currentRef.current : "")),
   );
-  const persist = () => {
-    saved.current = {
-      ...saved.current,
+  const save = (patch: Partial<ReadingPosition>, markLast = false) => {
+    if (!writePosition(key, patch, markLast)) setStorageError(true);
+  };
+  const persist = () =>
+    save({
       position: fullPosition.current,
       duration: lesson.duration,
       rate: rateRef.current,
@@ -426,21 +660,24 @@ function ReadingRoom({
             s.end !== null &&
             fullPosition.current >= s.start &&
             fullPosition.current < s.end,
-        )?.id || saved.current.sentence,
-    };
-    if (!writePosition(key, saved.current)) setStorageError(true);
-  };
+        )?.id || readPosition(key).sentence,
+    });
   const clearRepeat = () => {
     if (repeatTimer.current !== null) clearTimeout(repeatTimer.current);
     repeatTimer.current = null;
   };
   const stop = () => {
     playIntent.current = false;
-    setRunning(false);
     generation.current++;
     clearRepeat();
     audio.current?.pause();
+    setRunning(false);
     setPlaying(false);
+  };
+  const changeLoop = (mode: LoopMode) => {
+    loopRef.current = mode;
+    setLoopMode(mode);
+    if (mode !== "selection" && repeatTimer.current !== null) stop();
   };
   const play = () => {
     const media = audio.current;
@@ -457,41 +694,56 @@ function ReadingRoom({
       ) {
         playIntent.current = false;
         setRunning(false);
-        setError("播放未能开始，点击重试继续。");
         setPlaying(false);
+        setError("播放未能开始，点击重试继续。");
       }
     });
   };
   const start = (next: Source, autoplay = true, seek?: number) => {
+    const media = audio.current;
+    if (!media) return;
     if (
       source.current.kind === "full" &&
-      audio.current &&
-      audio.current.readyState >= 1
+      media.readyState >= 1 &&
+      media.currentSrc === new URL(source.current.url, location.href).href
     ) {
-      fullPosition.current = audio.current.currentTime;
+      fullPosition.current = media.currentTime;
       persist();
     }
-    if (seek !== undefined) fullPosition.current = seek;
+    const sameFull =
+      source.current.kind === "full" &&
+      next.kind === "full" &&
+      media.readyState >= 1 &&
+      !error;
+    if (seek !== undefined)
+      fullPosition.current = Math.max(0, Math.min(lesson.duration, seek));
     else if (
       next.kind === "full" &&
       fullPosition.current >= lesson.duration - 0.2
     )
       fullPosition.current = 0;
+    if (next.kind !== "full" && loopRef.current === "lesson") changeLoop("off");
+    if (next.kind === "full" && loopRef.current === "selection")
+      changeLoop("off");
     stop();
     setError("");
     source.current = next;
-    if (next.kind !== "vocabulary") setTab("passage");
     setKind(next.kind);
     setSelected(next.id === "full" ? "" : next.id);
-    const media = audio.current;
-    if (!media) return;
-    media.src = next.url;
-    media.load();
-    media.playbackRate = rateRef.current;
-    media.preservesPitch = true;
+    manualEnd.current = seek !== undefined && seek >= lesson.duration;
     if (next.kind !== "vocabulary")
       setPosition(next.kind === "full" ? fullPosition.current : next.offset);
-    if (autoplay) play();
+    if (sameFull) {
+      media.currentTime = Math.min(fullPosition.current, media.duration);
+      persist();
+    } else {
+      switching.current = true;
+      media.src = next.url;
+      media.load();
+    }
+    media.playbackRate = rateRef.current;
+    media.preservesPitch = true;
+    if (autoplay && !manualEnd.current) play();
   };
   const tick = () => {
     const media = audio.current;
@@ -502,8 +754,7 @@ function ReadingRoom({
       media.currentSrc !== new URL(source.current.url, location.href).href
     )
       return;
-    const absolute = source.current.offset + media.currentTime;
-    setPosition(absolute);
+    setPosition(source.current.offset + media.currentTime);
     if (source.current.kind === "full") {
       fullPosition.current = media.currentTime;
       if (Date.now() - lastSave.current > 2000) {
@@ -513,46 +764,62 @@ function ReadingRoom({
     }
   };
   const chooseSentence = (sentence: TextSentence) => {
-    if (sentence.start === null || sentence.end === null) return;
-    start({
-      url: `${base}/clips/${sentence.id}`,
-      kind: "sentence",
-      offset: sentence.start,
-      id: sentence.id,
-    });
+    if (sentence.start !== null && sentence.end !== null)
+      start({
+        url: `${base}/clips/${sentence.id}`,
+        kind: "sentence",
+        offset: sentence.start,
+        id: sentence.id,
+      });
   };
   const move = (direction: number) => {
     if (firstIndex < 0 && direction < 0) return;
     const next = sentences[firstIndex + direction];
-    if (next) chooseSentence(next);
+    if (next) {
+      setTab("passage");
+      chooseSentence(next);
+    }
   };
   const toggle = () => {
     if (playIntent.current) stop();
-    else {
-      if (error) start(source.current);
-      else play();
-    }
+    else if (error) start(source.current);
+    else play();
+  };
+  const seek = (target: number) => {
+    const resume = playIntent.current;
+    setFollow(true);
+    start(
+      { url: `${base}/audio`, kind: "full", offset: 0, id: "full" },
+      resume,
+      target,
+    );
   };
   useEffect(() => {
     const media = audio.current!;
     media.src = source.current.url;
     media.load();
-    const onOtherMedia = (event: Event) => {
-      if ((event as CustomEvent).detail !== media) stop();
+    save({ duration: lesson.duration }, true);
+    const other = (e: Event) => {
+      if ((e as CustomEvent).detail !== media) stop();
     };
-    const onHide = () => persist();
-    window.addEventListener(MEDIA_EVENT, onOtherMedia);
-    window.addEventListener("pagehide", onHide);
+    const hide = () => persist();
+    const visibility = () => {
+      if (document.visibilityState === "hidden") persist();
+    };
+    window.addEventListener(MEDIA_EVENT, other);
+    window.addEventListener("pagehide", hide);
+    document.addEventListener("visibilitychange", visibility);
     return () => {
       playIntent.current = false;
       generation.current++;
-      if (repeatTimer.current !== null) clearTimeout(repeatTimer.current);
+      clearRepeat();
       persist();
       media.pause();
       media.removeAttribute("src");
       media.load();
-      window.removeEventListener(MEDIA_EVENT, onOtherMedia);
-      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener(MEDIA_EVENT, other);
+      window.removeEventListener("pagehide", hide);
+      document.removeEventListener("visibilitychange", visibility);
     };
   }, [key]);
   useEffect(() => {
@@ -566,30 +833,27 @@ function ReadingRoom({
     return () => cancelAnimationFrame(frame);
   }, [playing]);
   useEffect(() => {
-    if (!follow || !playing || !current) return;
-    document
-      .getElementById(`reading-${key}-${current.id}`)
-      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [current?.id, follow, playing, key]);
+    if (follow && playing && current && tab === "passage")
+      document
+        .getElementById(`reading-${key}-${current.id}`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [current?.id, follow, playing, key, tab]);
   useEffect(() => {
-    const manual = (event: Event) => {
-      if (
-        event.type === "touchmove" &&
-        event.target instanceof Element &&
-        event.target.closest(".reading-dock")
-      )
-        return;
-      setFollow(false);
+    const manual = (e: Event) => {
+      if (!(e.target instanceof Element && e.target.closest(".reading-dock")))
+        setFollow(false);
     };
-    const keyboardScroll = (event: globalThis.KeyboardEvent) => {
+    const keyboardScroll = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLSelectElement
-      )
-        return;
-      if (
+        !(
+          e.target instanceof Element &&
+          e.target.closest(
+            'input, select, button, [role="slider"], [role="tab"], [role="menu"], [role="listbox"], [role="dialog"]',
+          )
+        ) &&
         ["PageDown", "PageUp", "Home", "End", "ArrowDown", "ArrowUp"].includes(
-          event.code,
+          e.code,
         )
       )
         setFollow(false);
@@ -604,18 +868,31 @@ function ReadingRoom({
     };
   }, []);
   const onEnded = () => {
-    if (!audio.current?.ended || !playIntent.current) return;
+    const media = audio.current;
+    if (!media?.ended || !playIntent.current) return;
     setPlaying(false);
     tick();
-    if (source.current.kind === "full") {
-      playIntent.current = false;
-      setRunning(false);
-      fullPosition.current = lesson.duration;
-      saved.current.completed = true;
-      persist();
+    if (manualEnd.current) {
+      stop();
       return;
     }
-    if (!loopRef.current) {
+    if (source.current.kind === "full") {
+      fullPosition.current = lesson.duration;
+      save({ completed: true });
+      persist();
+      if (loopRef.current === "lesson") {
+        fullPosition.current = 0;
+        media.currentTime = 0;
+        setPosition(0);
+        persist();
+        play();
+      } else {
+        playIntent.current = false;
+        setRunning(false);
+      }
+      return;
+    }
+    if (loopRef.current !== "selection") {
       playIntent.current = false;
       setRunning(false);
       return;
@@ -624,42 +901,48 @@ function ReadingRoom({
     repeatTimer.current = setTimeout(() => {
       repeatTimer.current = null;
       if (
-        token !== generation.current ||
-        !playIntent.current ||
-        !loopRef.current ||
-        !audio.current
-      )
-        return;
-      audio.current.currentTime = 0;
-      play();
+        token === generation.current &&
+        playIntent.current &&
+        loopRef.current === "selection" &&
+        audio.current
+      ) {
+        audio.current.currentTime = 0;
+        play();
+      }
     }, 500);
   };
   const keyDown = (e: KeyboardEvent) => {
+    if (e.defaultPrevented) return;
     if (
-      e.target instanceof HTMLInputElement ||
-      e.target instanceof HTMLSelectElement ||
-      e.target instanceof HTMLButtonElement ||
-      e.target instanceof HTMLAnchorElement
+      e.target instanceof Element &&
+      e.target.closest(
+        'input, select, button, a, textarea, [role="slider"], [role="tab"], [role="menu"], [role="listbox"], [role="dialog"], [contenteditable="true"]',
+      )
     )
       return;
     if (e.code === "Space") {
       e.preventDefault();
       toggle();
     }
-    if (e.code === "ArrowLeft") {
+    if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
       e.preventDefault();
-      move(-1);
-    }
-    if (e.code === "ArrowRight") {
-      e.preventDefault();
-      move(1);
+      move(e.code === "ArrowLeft" ? -1 : 1);
     }
   };
-  const maxLesson = [0, 143, 96, 60, 48][lesson.book];
+  const instruction =
+    lesson.question && lesson.instruction.endsWith(lesson.question)
+      ? lesson.instruction.slice(0, -lesson.question.length).trim()
+      : lesson.instruction;
+  const translated = sentences.filter((s) => s.translationZh);
+  const expandedAll =
+    translated.length > 0 && translated.every((s) => translations.has(s.id));
   const step = lesson.book === 1 ? 2 : 1;
   return (
     <section
-      className={`reading-room ${embedded ? "embedded-reading" : ""}`}
+      className={cn(
+        "reading-room relative min-w-0 outline-none",
+        embedded && "embedded-reading",
+      )}
       aria-label="课文精听"
       tabIndex={0}
       onKeyDown={keyDown}
@@ -670,13 +953,16 @@ function ReadingRoom({
         preload="metadata"
         onLoadedMetadata={() => {
           const media = audio.current!;
+          switching.current = false;
           media.playbackRate = rateRef.current;
           media.preservesPitch = true;
-          if (source.current.kind === "full")
+          if (source.current.kind === "full") {
             media.currentTime = Math.min(
               fullPosition.current,
               media.duration || lesson.duration,
             );
+            persist();
+          }
           setError("");
         }}
         onPlay={() => {
@@ -690,7 +976,7 @@ function ReadingRoom({
         }}
         onPause={() => {
           const media = audio.current!;
-          if (!media.paused) return;
+          if (!media.paused || switching.current) return;
           setPlaying(false);
           if (!media.ended) {
             playIntent.current = false;
@@ -710,310 +996,524 @@ function ReadingRoom({
         onSeeked={tick}
         onEnded={onEnded}
         onError={() => {
+          switching.current = false;
           stop();
           setError("音频暂时无法播放，点击重试。");
         }}
       />
-      <header className="reading-heading">
-        <div>
-          <span className="eyebrow">{lesson.label} · 课文精听</span>
-          <h1>{lesson.titleEn}</h1>
-          <p>{lesson.titleZh}</p>
+      <header className="reading-heading mb-7 flex flex-wrap items-start justify-between gap-5 pt-5 sm:pt-8">
+        <div className="space-y-3">
+          <Badge variant="secondary" className="font-normal">
+            {lesson.label} · 课文精听
+          </Badge>
+          <h1
+            className={cn(
+              "font-serif text-4xl leading-tight tracking-tight sm:text-5xl",
+              embedded && "sm:text-4xl",
+            )}
+          >
+            {lesson.titleEn}
+          </h1>
+          <p className="text-muted-foreground">{lesson.titleZh}</p>
         </div>
-        <div className="reading-heading-links">
+        <div className="flex flex-wrap items-center gap-2">
+          <CompletionButton lessonKey={key} duration={lesson.duration} />
           {lesson.lectureLessonId && (
-            <a href={`/learn/${lesson.lectureLessonId}`}>
-              观看讲解 <ChevronRight size={15} />
+            <a
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "sm" }),
+                "gap-1",
+              )}
+              href={`/learn/${lesson.lectureLessonId}`}
+            >
+              观看讲解
+              <ChevronRight className="size-4" />
             </a>
           )}
           {embedded && (
-            <Link to={`/books/${lesson.book}/lessons/${lesson.lesson}`}>
-              打开电子书 <BookOpen size={15} />
+            <Link
+              to={`/books/${lesson.book}/lessons/${lesson.lesson}`}
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+            >
+              打开电子书
+              <BookOpen className="ml-1 size-4" />
             </Link>
           )}
         </div>
       </header>
-      <div className="reading-tabs" role="tablist" aria-label="阅读内容">
-        <button
-          role="tab"
-          aria-selected={tab === "passage"}
-          onClick={() => setTab("passage")}
-        >
-          课文
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === "vocabulary"}
-          onClick={() => setTab("vocabulary")}
-        >
-          生词 · {lesson.vocabulary.length}
-        </button>
-      </div>
-      <div className={`reading-columns tab-${tab}`}>
-        <div className="reading-passage">
-          <div className="reading-question">
-            <Headphones size={20} />
-            <div>
-              <small>{instruction}</small>
-              <p>{lesson.question}</p>
-              {lesson.instructionZh && <small>{lesson.instructionZh}</small>}
-            </div>
-          </div>
-          <div className="reading-text">
-            {lesson.paragraphs.map((paragraph) => (
-              <div className="reading-paragraph" key={paragraph.id}>
-                {paragraph.speaker && (
-                  <span className="reading-speaker">{paragraph.speaker}</span>
-                )}
-                {paragraph.note && (
-                  <p className="reading-note">{paragraph.note}</p>
-                )}
-                {paragraph.sentences.map((sentence) => (
-                  <span
-                    key={sentence.id}
-                    id={`reading-${key}-${sentence.id}`}
-                    className={`reading-sentence ${current?.id === sentence.id ? "current-sentence" : ""} ${selected === sentence.id ? "selected-sentence" : ""}`}
-                  >
-                    <button
-                      className="sentence-play"
-                      aria-label={`点读句子：${sentence.text}`}
-                      disabled={sentence.start === null}
-                      onClick={() => chooseSentence(sentence)}
-                    >
-                      <Play size={14} fill="currentColor" />
-                    </button>
-                    {sentence.words.map((word) => (
-                      <span key={word.id}>
-                        {word.before}
-                        <button
-                          className={`reading-word ${currentWord?.id === word.id ? "current-word" : ""} ${selected === word.id ? "selected-word" : ""}`}
-                          aria-label={`点读单词：${word.text}`}
-                          aria-current={
-                            currentWord?.id === word.id ? "true" : undefined
-                          }
-                          disabled={word.start === null || word.end === null}
-                          title={
-                            word.start === null
-                              ? "此词的原音定位正在准备"
-                              : "听这个词的课文原音"
-                          }
-                          onClick={() =>
-                            start({
-                              url: `${base}/clips/${word.id}`,
-                              kind: "word",
-                              offset: Math.max(0, word.start! - 0.015),
-                              id: word.id,
-                            })
-                          }
-                        >
-                          {word.text}
-                        </button>
-                      </span>
-                    ))}{" "}
-                  </span>
-                ))}
-              </div>
-            ))}
-          </div>
-          <button
-            className="translation-toggle"
-            aria-expanded={showTranslation}
-            onClick={() => setShowTranslation((v) => !v)}
-          >
-            {showTranslation ? "收起中文译文" : "展开中文译文"}
-          </button>
-          {showTranslation && (
-            <div className="reading-translation">
-              {lesson.translation.map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
-            </div>
+      <Tabs value={tab} onValueChange={setTab} className="gap-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList aria-label="阅读内容" className="h-11">
+            <TabsTrigger value="passage" className="min-w-24 gap-2">
+              <BookOpen className="size-4" />
+              课文
+            </TabsTrigger>
+            <TabsTrigger value="vocabulary" className="min-w-28 gap-2">
+              <Languages className="size-4" />
+              单词 · {lesson.vocabulary.length}
+            </TabsTrigger>
+          </TabsList>
+          {tab === "passage" && translated.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setTranslations(
+                  expandedAll
+                    ? new Set()
+                    : new Set(translated.map((s) => s.id)),
+                )
+              }
+            >
+              <Languages className="mr-1 size-4" />
+              {expandedAll ? "收起全部译文" : "展开全部译文"}
+            </Button>
           )}
         </div>
-        <aside className="reading-vocabulary">
-          <h2>
-            本课生词 <span>{lesson.vocabulary.length}</span>
-          </h2>
-          <p className="vocabulary-caption">美音 · 单词与短语</p>
-          {lesson.vocabulary.map((word) => (
-            <div
-              className={`vocabulary-entry ${selected === word.id ? "selected-vocabulary" : ""}`}
-              key={word.id}
-            >
-              <div>
-                <strong>{word.word}</strong>
-                <small>{word.pos}</small>
-                <p>{word.meaning}</p>
+        <TabsContent value="passage" className="reading-passage m-0">
+          <Card className="gap-5 shadow-sm">
+            <CardContent className="space-y-7 px-4 sm:px-8">
+              <div className="reading-question flex gap-3 rounded-xl border border-primary/10 bg-secondary/50 p-4 text-primary sm:p-5">
+                <Headphones className="mt-1 size-5" />
+                <div className="space-y-2">
+                  <small className="text-xs leading-5 text-muted-foreground">
+                    {instruction}
+                  </small>
+                  <p className="font-serif text-lg">{lesson.question}</p>
+                  {lesson.instructionZh && (
+                    <small className="block text-xs leading-5 text-muted-foreground">
+                      {lesson.instructionZh}
+                    </small>
+                  )}
+                </div>
               </div>
-              <button
-                disabled={!word.ready}
-                aria-label={`生词发音：${word.word}`}
-                title={word.ready ? "播放美音词音" : "词音正在准备"}
-                onClick={() =>
-                  start({
-                    url: `/api/pronunciations/${word.pronunciationId}`,
-                    kind: "vocabulary",
-                    offset: 0,
-                    id: word.id,
-                  })
-                }
-              >
-                <Volume2 size={18} />
-              </button>
-            </div>
-          ))}
-        </aside>
-      </div>
-      <div className="reading-dock">
-        <div className="reading-status">
-          <span>
+              <div className="reading-text space-y-6">
+                {lesson.paragraphs.map((paragraph) => (
+                  <div
+                    key={paragraph.id}
+                    className="reading-paragraph space-y-2"
+                  >
+                    {paragraph.speaker && (
+                      <p className="mb-3 text-xs font-semibold tracking-wide text-muted-foreground">
+                        {paragraph.speaker}
+                      </p>
+                    )}
+                    {paragraph.note && (
+                      <p className="text-sm italic text-muted-foreground">
+                        {paragraph.note}
+                      </p>
+                    )}
+                    {paragraph.sentences.map((sentence) => (
+                      <Collapsible
+                        key={sentence.id}
+                        open={translations.has(sentence.id)}
+                        onOpenChange={(open) =>
+                          setTranslations((previous) => {
+                            const next = new Set(previous);
+                            if (open) next.add(sentence.id);
+                            else next.delete(sentence.id);
+                            return next;
+                          })
+                        }
+                        id={`reading-${key}-${sentence.id}`}
+                        className={cn(
+                          "reading-sentence scroll-mt-8 scroll-mb-80 rounded-xl border border-transparent p-2 transition-colors sm:p-3",
+                          current?.id === sentence.id &&
+                            "current-sentence border-primary/10 bg-secondary/60",
+                          selected === sentence.id &&
+                            "selected-sentence border-primary/20",
+                        )}
+                      >
+                        <div className="flex items-start gap-1.5 sm:gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="sentence-play mt-0.5 size-8 shrink-0 rounded-full text-primary/65 hover:text-primary"
+                            aria-label={`点读句子：${sentence.text}`}
+                            disabled={
+                              sentence.start === null || sentence.end === null
+                            }
+                            onClick={() => chooseSentence(sentence)}
+                          >
+                            <Play className="size-3.5 fill-current" />
+                          </Button>
+                          <div className="min-w-0 flex-1 pt-1 font-serif text-[19px] leading-9 sm:text-[21px]">
+                            {sentence.words.length
+                              ? sentence.words.map((word) => (
+                                  <span key={word.id}>
+                                    {word.before}
+                                    <button
+                                      className={cn(
+                                        "reading-word rounded px-0.5 py-1 text-left transition-colors hover:bg-primary/10 disabled:cursor-default",
+                                        currentWord?.id === word.id &&
+                                          "current-word bg-primary text-white hover:bg-primary",
+                                        selected === word.id &&
+                                          "selected-word ring-1 ring-primary/35",
+                                      )}
+                                      aria-label={`点读单词：${word.text}`}
+                                      aria-current={
+                                        currentWord?.id === word.id
+                                          ? "true"
+                                          : undefined
+                                      }
+                                      disabled={
+                                        word.start === null || word.end === null
+                                      }
+                                      title={
+                                        word.start === null
+                                          ? "此词的原音定位正在准备"
+                                          : "听这个词的课文原音"
+                                      }
+                                      onClick={() =>
+                                        start({
+                                          url: `${base}/clips/${word.id}`,
+                                          kind: "word",
+                                          offset: Math.max(
+                                            0,
+                                            word.start! - 0.015,
+                                          ),
+                                          id: word.id,
+                                        })
+                                      }
+                                    >
+                                      {word.text}
+                                    </button>
+                                  </span>
+                                ))
+                              : sentence.text}
+                          </div>
+                          {sentence.translationZh && (
+                            <CollapsibleTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-1 h-8 shrink-0 gap-0.5 px-1.5 text-xs text-muted-foreground"
+                                aria-label={`${translations.has(sentence.id) ? "收起" : "展开"}第 ${sentences.indexOf(sentence) + 1} 句译文`}
+                              >
+                                译
+                                <ChevronDown
+                                  className={cn(
+                                    "size-3 transition-transform",
+                                    translations.has(sentence.id) &&
+                                      "rotate-180",
+                                  )}
+                                />
+                              </Button>
+                            </CollapsibleTrigger>
+                          )}
+                        </div>
+                        {sentence.translationZh && (
+                          <CollapsibleContent>
+                            <p className="reading-translation ml-10 mt-2 border-l-2 border-chalk px-3 py-1 text-sm leading-7 text-muted-foreground">
+                              {sentence.translationZh}
+                            </p>
+                          </CollapsibleContent>
+                        )}
+                      </Collapsible>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              {translated.length < sentences.length &&
+                lesson.translation.length > 0 && (
+                  <Collapsible>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="gap-2 text-muted-foreground"
+                      >
+                        整课参考译文
+                        <ChevronDown className="size-4" />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="reading-translation space-y-3 rounded-xl bg-muted/50 p-5 text-sm leading-7 text-muted-foreground">
+                      {lesson.translation.map((p, i) => (
+                        <p key={i}>{p}</p>
+                      ))}
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="vocabulary" className="reading-vocabulary m-0">
+          <Card className="shadow-sm">
+            <CardContent>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-medium">本课单词</h2>
+                <span className="text-xs text-muted-foreground">
+                  美音 · 单词与短语
+                </span>
+              </div>
+              <div className="grid gap-x-8 divide-y divide-border sm:grid-cols-2 sm:divide-y-0">
+                {lesson.vocabulary.map((word) => (
+                  <div
+                    key={word.id}
+                    className={cn(
+                      "vocabulary-entry flex items-center justify-between gap-3 border-b border-border py-5",
+                      selected === word.id &&
+                        "selected-vocabulary rounded-lg bg-secondary/50 px-3",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <strong className="font-serif text-2xl font-normal">
+                        {word.word}
+                      </strong>
+                      <small className="ml-3 text-xs text-muted-foreground">
+                        {word.pos}
+                      </small>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        {word.meaning}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="size-11 shrink-0 rounded-full text-primary"
+                      disabled={!word.ready}
+                      aria-label={`生词发音：${word.word}`}
+                      title={word.ready ? "播放美音词音" : "词音正在准备"}
+                      onClick={() =>
+                        start({
+                          url: `/api/pronunciations/${word.pronunciationId}`,
+                          kind: "vocabulary",
+                          offset: 0,
+                          id: word.id,
+                        })
+                      }
+                    >
+                      <Volume2 className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+      <div className="reading-dock sticky bottom-3 z-20 mt-6 rounded-2xl border border-primary/15 bg-card/95 p-3 shadow-lg backdrop-blur-md sm:p-4">
+        <div className="reading-status mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 text-primary">
+            <Headphones className="size-3.5" />
             {kind === "full"
-              ? current
-                ? "正在听课文"
-                : "整课音频"
+              ? "整课音频"
               : kind === "vocabulary"
                 ? "生词发音"
                 : kind === "word"
                   ? "单词原音"
                   : "句子原音"}
           </span>
-          <span>
-            {clock(position)} / {clock(lesson.duration)}
-          </span>
-          {!follow && (
-            <button
+          {record.completed && (
+            <Badge variant="secondary" className="px-1.5 text-[10px]">
+              本课已学
+            </Badge>
+          )}
+          {(!follow || tab !== "passage") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-7 text-xs"
               onClick={() => {
                 setTab("passage");
                 setFollow(true);
-                document
-                  .getElementById(`reading-${key}-${currentRef.current}`)
-                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
+                setTimeout(
+                  () =>
+                    document
+                      .getElementById(`reading-${key}-${currentRef.current}`)
+                      ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+                  0,
+                );
               }}
             >
               回到当前句
-            </button>
+            </Button>
           )}
         </div>
-        <input
-          type="range"
-          aria-label="课文音频进度"
-          min={0}
-          max={lesson.duration}
-          step={0.05}
-          value={Math.min(position, lesson.duration)}
-          onChange={(e) => {
-            const resume = running;
-            setLoop(false);
-            loopRef.current = false;
-            start(
-              { url: `${base}/audio`, kind: "full", offset: 0, id: "full" },
-              resume,
-              Number(e.target.value),
-            );
-          }}
+        <TextbookTimeline
+          paragraphs={lesson.paragraphs}
+          duration={lesson.duration}
+          position={position}
+          mode={record.markerMode}
+          changeMode={(mode: MarkerMode) => save({ markerMode: mode })}
+          seek={seek}
         />
-        <div className="reading-controls">
-          <button
-            className="reading-play-toggle"
-            aria-label={running ? "暂停精听" : "播放精听"}
-            onClick={toggle}
-          >
-            {running ? <Pause size={20} /> : <Play size={20} />}
-          </button>
-          <button
-            aria-label="上一句"
-            disabled={firstIndex <= 0}
-            onClick={() => move(-1)}
-          >
-            <ChevronLeft size={19} />
-            <span>上一句</span>
-          </button>
-          <button
-            aria-label="下一句"
-            disabled={firstIndex === sentences.length - 1}
-            onClick={() => move(1)}
-          >
-            <ChevronRight size={19} />
-            <span>下一句</span>
-          </button>
-          <button
-            aria-label="播放整课"
-            onClick={() => {
-              setLoop(false);
-              loopRef.current = false;
-              start({
-                url: `${base}/audio`,
-                kind: "full",
-                offset: 0,
-                id: "full",
-              });
-            }}
-          >
-            <Headphones size={18} />
-            <span>播放整课</span>
-          </button>
-          <button
-            role="switch"
-            aria-checked={loop}
-            aria-label="循环选中内容"
-            className={loop ? "loop-active" : ""}
-            onClick={() => {
-              loopRef.current = !loop;
-              setLoop(!loop);
-              if (loop && repeatTimer.current !== null) stop();
-            }}
-          >
-            <Repeat size={18} />
-            <span>循环选中</span>
-          </button>
-          <label className="reading-rate">
-            <span>倍速</span>
-            <select
-              aria-label="精听倍速"
-              value={rate}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                rateRef.current = value;
-                setRate(value);
-                if (audio.current) audio.current.playbackRate = value;
+        <div className="reading-controls mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-11"
+              aria-label="上一句"
+              disabled={firstIndex <= 0}
+              onClick={() => move(-1)}
+            >
+              <ChevronLeft className="size-5" />
+            </Button>
+            <Button
+              size="icon"
+              className="reading-play-toggle size-12 rounded-full"
+              aria-label={running ? "暂停精听" : "播放精听"}
+              onClick={toggle}
+            >
+              {running ? (
+                <Pause className="size-5 fill-current" />
+              ) : (
+                <Play className="ml-0.5 size-5 fill-current" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-11"
+              aria-label="下一句"
+              disabled={firstIndex === sentences.length - 1}
+              onClick={() => move(1)}
+            >
+              <ChevronRight className="size-5" />
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            <Button
+              variant={kind === "full" ? "secondary" : "ghost"}
+              size="sm"
+              className="min-h-11 gap-1.5 px-2 sm:px-3"
+              aria-label="播放整课"
+              onClick={() =>
+                start({
+                  url: `${base}/audio`,
+                  kind: "full",
+                  offset: 0,
+                  id: "full",
+                })
+              }
+            >
+              <Headphones className="size-4" />
+              <span className="hidden sm:inline">播放整课</span>
+              <span className="sm:hidden">整课</span>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant={loopMode !== "off" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="min-h-11 gap-1 px-2 sm:px-3"
+                  aria-label="循环模式"
+                >
+                  <Repeat className="size-4" />
+                  <span className="text-xs">
+                    {loopMode === "lesson"
+                      ? "整课循环"
+                      : loopMode === "selection"
+                        ? "选中循环"
+                        : "循环"}
+                  </span>
+                  <ChevronDown className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="end">
+                <DropdownMenuRadioGroup
+                  value={loopMode}
+                  onValueChange={(value) => {
+                    const mode = value as LoopMode;
+                    if (mode === "lesson" && source.current.kind !== "full")
+                      start(
+                        {
+                          url: `${base}/audio`,
+                          kind: "full",
+                          offset: 0,
+                          id: "full",
+                        },
+                        playIntent.current,
+                      );
+                    changeLoop(mode);
+                  }}
+                >
+                  <DropdownMenuRadioItem value="off">
+                    关闭循环
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="lesson">
+                    整课循环
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="selection">
+                    选中内容循环
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Select
+              value={String(rate)}
+              onValueChange={(value) => {
+                const next = Number(value);
+                rateRef.current = next;
+                setRate(next);
+                if (audio.current) audio.current.playbackRate = next;
                 persist();
               }}
             >
-              {RATES.map((value) => (
-                <option key={value} value={value}>
-                  {value}×
-                </option>
-              ))}
-            </select>
-          </label>
+              <SelectTrigger
+                aria-label="精听倍速"
+                className="min-h-11 w-20 border-0 bg-transparent px-2 shadow-none"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" side="top">
+                {RATES.map((value) => (
+                  <SelectItem value={String(value)} key={value}>
+                    {value}×
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         {error && (
-          <p className="reading-error" role="alert">
-            {error}
-            <button onClick={() => start(source.current)}>重试</button>
-          </p>
+          <div
+            role="alert"
+            className="reading-error mt-3 flex items-center justify-between gap-2 rounded-lg bg-destructive/5 px-3 text-xs text-destructive"
+          >
+            <p>{error}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => start(source.current)}
+            >
+              <RotateCcw className="mr-1 size-3.5" />
+              重试
+            </Button>
+          </div>
         )}
         {storageError && (
-          <p role="status">当前浏览器无法保存进度，本次学习仍可继续。</p>
+          <p role="status" className="mt-2 text-xs text-destructive">
+            当前浏览器无法保存进度，本次学习仍可继续。
+          </p>
         )}
       </div>
       {!embedded && (
-        <div className="reading-lesson-navigation">
+        <nav
+          aria-label="课文导航"
+          className="reading-lesson-navigation mt-7 flex justify-between gap-4"
+        >
           {lesson.lesson > 1 ? (
-            <Link to={`/books/${lesson.book}/lessons/${lesson.lesson - step}`}>
-              <ArrowLeft size={16} />
+            <Link
+              to={`/books/${lesson.book}/lessons/${lesson.lesson - step}`}
+              className={cn(buttonVariants({ variant: "outline" }), "gap-2")}
+            >
+              <ArrowLeft className="size-4" />
               上一课
             </Link>
           ) : (
             <span />
           )}
-          {lesson.lesson < maxLesson && (
-            <Link to={`/books/${lesson.book}/lessons/${lesson.lesson + step}`}>
+          {lesson.lesson < [0, 143, 96, 60, 48][lesson.book] && (
+            <Link
+              to={`/books/${lesson.book}/lessons/${lesson.lesson + step}`}
+              className={cn(buttonVariants({ variant: "outline" }), "gap-2")}
+            >
               下一课
-              <ChevronRight size={16} />
+              <ChevronRight className="size-4" />
             </Link>
           )}
-        </div>
+        </nav>
       )}
     </section>
   );

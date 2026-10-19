@@ -1,0 +1,4 @@
+# Optional offline alignment tool; never installed in the website container.
+onnxruntime==1.31.0
+tokenizers==0.23.3
+numpy==2.4.6

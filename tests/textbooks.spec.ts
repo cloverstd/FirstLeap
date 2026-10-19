@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,6 +9,7 @@ let full: Buffer, wordClip: Buffer, sentenceClip: Buffer, video: Buffer;
 const sentence = (id: string, start: number) => ({
   id,
   text: "Is this your handbag?",
+  translationZh: "这是你的手提包吗？",
   start,
   end: start + 1.8,
   words: ["Is", "this", "your", "handbag?"].map((text, i) => ({
@@ -219,15 +220,17 @@ test("four books, searchable contents and mobile reading stay usable without vid
       page.getByRole("button", { name: "播放整课", exact: true }),
     ).toBeVisible();
     if (width < 800) {
-      await page.getByRole("tab", { name: "生词 · 1" }).click();
+      await page.getByRole("tab", { name: "单词 · 1" }).click();
       await expect(
         page.getByRole("button", { name: "生词发音：handbag" }),
       ).toBeVisible();
       await page.getByRole("tab", { name: "课文", exact: true }).click();
     }
   }
-  await page.getByRole("button", { name: "展开中文译文" }).click();
-  await expect(page.locator(".reading-translation")).toContainText(
+  await page
+    .getByRole("button", { name: "展开第 1 句译文", exact: true })
+    .click();
+  await expect(page.locator(".reading-translation").first()).toContainText(
     "这是你的手提包吗",
   );
   await page.reload();
@@ -244,8 +247,12 @@ test("word clips use the selected occurrence and repeat on their natural end", a
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/books/1/lessons/1");
   await loaded(page);
-  await page.getByRole("switch", { name: "循环选中内容" }).click();
-  await page.getByLabel("精听倍速").selectOption("1.25");
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "选中内容循环", exact: true })
+    .click();
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "1.25×", exact: true }).click();
   await page
     .getByRole("button", { name: "点读单词：handbag?", exact: true })
     .nth(1)
@@ -286,7 +293,7 @@ test("word clips use the selected occurrence and repeat on their natural end", a
   );
   expect(stored.completed).toBe(false);
   expect(stored.position).toBe(0);
-  if (isMobile) await page.getByRole("tab", { name: "生词 · 1" }).click();
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
   await page.getByRole("button", { name: "生词发音：handbag" }).click();
   await expect
     .poll(() =>
@@ -305,7 +312,10 @@ test("word clips use the selected occurrence and repeat on their natural end", a
   await page.getByRole("button", { name: "暂停精听" }).click();
   if (isMobile) {
     await page.getByRole("button", { name: "播放整课", exact: true }).click();
-    await expect(page.locator(".reading-passage")).toBeVisible();
+    await expect(page.getByRole("tab", { name: "单词 · 1" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   }
   expect(errors).toEqual([]);
 });
@@ -344,7 +354,9 @@ test("full lesson seek, highlights and resume survive temporary point reading", 
     )
     .toBeCloseTo(3.3, 1);
   const seek = page.getByRole("slider", { name: "课文音频进度" });
-  await seek.fill("5.9");
+  await seek.focus();
+  await seek.press("Home");
+  for (let i = 0; i < 118; i++) await seek.press("ArrowRight");
   await loaded(page);
   await expect
     .poll(() =>
@@ -472,7 +484,10 @@ test("pausing during a pending repeat also cancels late playback", async ({
 }) => {
   await page.goto("/books/1/lessons/1");
   await loaded(page);
-  await page.getByRole("switch", { name: "循环选中内容" }).click();
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "选中内容循环", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "点读单词：handbag?", exact: true })
     .first()
@@ -510,4 +525,243 @@ test("pausing during a pending repeat also cancels late playback", async ({
   await expect(
     page.getByRole("button", { name: "播放精听", exact: true }),
   ).toBeVisible();
+});
+
+test("sentence translations start collapsed and tabs work on every screen", async ({
+  page,
+}) => {
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await expect(page.locator(".reading-translation")).toHaveCount(0);
+  const first = page.getByRole("button", {
+    name: "展开第 1 句译文",
+    exact: true,
+  });
+  await first.click();
+  await expect(page.locator(".reading-translation")).toHaveCount(1);
+  await expect(page.locator(".reading-sentence").first()).toContainText(
+    "这是你的手提包吗？",
+  );
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await page.getByRole("button", { name: "展开全部译文", exact: true }).click();
+  await expect(page.locator(".reading-translation")).toHaveCount(2);
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  await expect(page.locator(".reading-passage")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "生词发音：handbag" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "课文", exact: true }).click();
+  await page.reload();
+  await expect(page.locator(".reading-translation")).toHaveCount(0);
+});
+
+test("speed selection keeps its keyboard input separate from sentence navigation", async ({
+  page,
+}) => {
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  expect(
+    await page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentSrc),
+  ).toContain("/audio");
+  await page.keyboard.press("Escape");
+  await page.getByRole("region", { name: "课文精听", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(() =>
+      page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentSrc),
+    )
+    .toContain("/clips/s1");
+});
+
+test("whole lesson repeats naturally and manual completion survives playback saves", async ({
+  page,
+}) => {
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "1.5×", exact: true }).click();
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "整课循环", exact: true })
+    .click();
+  for (let i = 0; i < 2; i++) {
+    await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
+      audio.pause();
+      audio.currentTime = 9.3;
+    });
+    await page.getByRole("button", { name: "播放精听", exact: true }).click();
+    await expect
+      .poll(() =>
+        page
+          .locator("audio")
+          .evaluate((audio: HTMLAudioElement) => audio.currentTime),
+      )
+      .toBeLessThan(3);
+    await expect(page.locator("audio")).toHaveJSProperty("paused", false);
+    await expect(page.locator("audio")).toHaveJSProperty("playbackRate", 1.5);
+    await expect(
+      page.getByRole("button", { name: "第一册第1课，标记未学", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+  }
+  await page
+    .getByRole("button", { name: "第一册第1课，标记未学", exact: true })
+    .click();
+  await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+  await page.reload();
+  await loaded(page);
+  await expect(
+    page.getByRole("button", { name: "第一册第1课，标记已学", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await page.goto("/books/1");
+  await expect(
+    page.getByRole("progressbar", { name: "第一册完成度", exact: true }),
+  ).toHaveAttribute("aria-valuenow", "0");
+  await page
+    .getByRole("button", { name: "第一册第1课，标记已学", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/books\/1$/);
+  await expect(
+    page.getByRole("progressbar", { name: "第一册完成度", exact: true }),
+  ).toHaveAttribute("aria-valuenow", "100");
+});
+
+test("both boundary kinds seek without changing playback and preferences are per lesson", async ({
+  page,
+}) => {
+  await page.route("**/api/books/1/lessons/3", (route) =>
+    route.fulfill({
+      json: { ...detail, lesson: 3, label: "Lesson 3 & 4", revision: "third" },
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  const seekToMarker = async (name: RegExp) => {
+    await page.getByRole("button", { name: "全部断点", exact: true }).click();
+    await page.getByRole("button", { name }).click();
+  };
+  await seekToMarker(/^第 2 句起点/);
+  await loaded(page);
+  await expect
+    .poll(() =>
+      page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
+    )
+    .toBeCloseTo(5, 1);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await seekToMarker(/^第 1 句终点/);
+  await expect
+    .poll(() =>
+      page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
+    )
+    .toBeCloseTo(3.8, 1);
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await seekToMarker(/^第 2 句起点/);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", false);
+  await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+  await page.getByRole("tab", { name: "段落起止", exact: true }).click();
+  await seekToMarker(/^第 1 段终点/);
+  await expect
+    .poll(() =>
+      page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
+    )
+    .toBeCloseTo(6.8, 1);
+  await page.goto("/books/1/lessons/3");
+  await expect(
+    page.getByRole("tab", { name: "句子起止", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.goto("/books/1/lessons/1");
+  await expect(
+    page.getByRole("tab", { name: "段落起止", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("button", { name: "第一册第1课，标记已学", exact: true }),
+  ).toBeVisible();
+});
+
+test("catalog updates do not move the continue-learning target and synchronize across tabs", async ({
+  page,
+  context,
+}) => {
+  await page.route("**/api/books/1", (route) =>
+    route.fulfill({
+      json: {
+        ...book,
+        lessonCount: 2,
+        lessons: [summary, { ...summary, lesson: 3, label: "Lesson 3 & 4" }],
+      },
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await page.goto("/books/1");
+  await page
+    .getByRole("button", { name: "第一册第3课，标记已学", exact: true })
+    .click();
+  await expect(page.getByRole("link", { name: /继续学习/ })).toHaveAttribute(
+    "href",
+    "/books/1/lessons/1",
+  );
+  await expect(
+    page.getByRole("progressbar", { name: "第一册完成度", exact: true }),
+  ).toHaveAttribute("aria-valuenow", "50");
+  // A second page writes the same local progress store; the first page updates
+  // through the browser's actual storage event, without reloading.
+  const second = await context.newPage();
+  await second.route("**/*", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<html><body>Progress sync</body></html>",
+    }),
+  );
+  await second.goto("/");
+  await second.evaluate(() => {
+    const key = "firstleap.textbook.progress.v1";
+    const value = JSON.parse(localStorage.getItem(key)!);
+    value.lessons["1:3"].completed = false;
+    localStorage.setItem(key, JSON.stringify(value));
+  });
+  await expect(
+    page.getByRole("progressbar", { name: "第一册完成度", exact: true }),
+  ).toHaveAttribute("aria-valuenow", "0");
+  await second.close();
+});
+
+test("classroom theme has no horizontal overflow and keeps the audio dock usable", async ({
+  page,
+}, testInfo) => {
+  const lessonPath = join(
+    process.cwd(),
+    "data/textbooks/library/book1/001.json",
+  );
+  const real = existsSync(lessonPath)
+    ? JSON.parse(readFileSync(lessonPath, "utf8"))
+    : detail;
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({ json: real }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await expect(
+    page.getByRole("heading", { name: "Excuse me!", exact: true }),
+  ).toBeVisible();
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await expect(
+      page.getByRole("button", { name: "播放精听", exact: true }),
+    ).toBeVisible();
+  }
+  await page.setViewportSize({
+    width: testInfo.project.name === "mobile" ? 390 : 1440,
+    height: 1000,
+  });
+  await page.screenshot({
+    path: testInfo.outputPath("reading.png"),
+    fullPage: true,
+  });
 });

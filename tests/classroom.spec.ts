@@ -78,9 +78,10 @@ test("catalog search, lesson navigation and saved completion", async ({
       .locator("video")
       .evaluate((el: HTMLVideoElement) => el.playbackRate),
   ).toBe(1.5);
-  await expect(
-    page.getByRole("switch", { name: "连续播放" }),
-  ).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByRole("switch", { name: "连续播放" })).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
   await page.getByRole("button", { name: "上一节 Lesson 1 & 2" }).click();
   await expect(page).toHaveURL(/\/learn\/lesson1$/);
   await page.getByRole("button", { name: "我的课堂", exact: true }).click();
@@ -388,7 +389,7 @@ test("lecture and reading shortcuts clamp, preserve pause and save positions", a
   );
   await page.goto("/learn/lesson1");
   await expect(
-    page.getByRole("button", { name: "快退 30 秒", exact: true }),
+    page.getByRole("button", { name: "更多跳转", exact: true }),
   ).toBeDisabled();
   for (const mode of ["lecture", "reading"]) {
     if (mode === "reading")
@@ -398,15 +399,17 @@ test("lecture and reading shortcuts clamp, preserve pause and save positions", a
       mode === "lecture"
         ? [-30, -15, -10, -5, 5, 10, 15, 30]
         : [-10, -5, 5, 10];
-    await expect(page.locator(".seek-tools button")).toHaveCount(
-      offsets.length,
-    );
+    await expect(page.locator(".seek-tools button")).toHaveCount(4);
     for (const offset of offsets) {
       await page.locator("video").evaluate((v: HTMLVideoElement) => {
         v.currentTime = 50;
       });
+      if (Math.abs(offset) > 5)
+        await page
+          .getByRole("button", { name: "更多跳转", exact: true })
+          .click();
       await page
-        .getByRole("button", {
+        .getByRole(Math.abs(offset) > 5 ? "menuitem" : "button", {
           name: `${offset < 0 ? "快退" : "快进"} ${Math.abs(offset)} 秒`,
           exact: true,
         })
@@ -476,9 +479,9 @@ test("reading loops twice, retains speed, excludes continuous and restores prefe
     }),
   );
   await page.goto("/learn/lesson1");
-  await expect(
-    page.getByRole("switch", { name: "循环当前视频" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "循环当前视频" })).toHaveCount(
+    0,
+  );
   await page.getByRole("button", { name: "美音朗读", exact: true }).click();
   await metadata(page, 16);
   const loop = page.getByRole("switch", { name: "循环当前视频" });

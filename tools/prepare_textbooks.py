@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import unicodedata
+from textbook_translations import apply_sentence_translations
 
 VERSION = "textbooks-v3"
 ALIGN_MODEL = ALIGN_METADATA = None
@@ -501,11 +502,13 @@ def generate_pronunciations(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True, type=Path)
+    parser.add_argument("--source", type=Path)
     parser.add_argument("--data", default=Path("data"), type=Path)
     parser.add_argument("--books", default="1,2,3,4")
     parser.add_argument("--lesson", type=int)
     parser.add_argument("--align", action="store_true")
+    parser.add_argument("--translations-only", action="store_true", help="Import sentence translations into existing manifests without rerunning alignment")
+    parser.add_argument("--translation-maps", type=Path, help="Defaults to DATA_ROOT/textbooks/translations")
     parser.add_argument("--pronunciations", action="store_true")
     parser.add_argument(
         "--pronunciations-only",
@@ -530,6 +533,27 @@ def main():
         default=Path(__file__).with_name("textbook_overrides.json"),
     )
     args = parser.parse_args()
+    output = args.data / "textbooks/library"
+    translation_maps = args.translation_maps or args.data / "textbooks/translations"
+    if args.translations_only:
+        if args.align or args.pronunciations or args.pronunciations_only:
+            parser.error("translations-only cannot be combined with audio preparation")
+        prepared = []
+        for book in map(int, args.books.split(",")):
+            for path in sorted((output / f"book{book}").glob("[0-9]*.json")):
+                lesson = read(path)
+                if args.lesson is not None and lesson["lesson"] != args.lesson:
+                    continue
+                mapping = translation_maps / f"book{book}/{lesson['lesson']:03d}.json"
+                prepared.append((path, apply_sentence_translations(lesson, read(mapping))))
+        if not prepared:
+            parser.error("no existing lessons matched the selection")
+        for path, lesson in prepared:
+            atomic_json(path, lesson)
+        print(f"Imported sentence translations for {len(prepared)} lessons")
+        return
+    if args.source is None:
+        parser.error("--source is required for audio and textbook preparation")
     if bool(args.tts_onnx_model) != bool(args.tts_onnx_voices):
         parser.error("ONNX model and voice files must be supplied together")
     if args.workers < 1 or args.threads < 1:
@@ -661,6 +685,9 @@ def main():
                     {"differences": differences, "alignmentIssues": []},
                 )
             lesson["revision"] = revision
+            translation_map = translation_maps / f"book{book}/{no:03d}.json"
+            if translation_map.exists():
+                lesson = apply_sentence_translations(lesson, read(translation_map))
             atomic_json(path, lesson)
             generated.append(lesson)
             summaries.append(

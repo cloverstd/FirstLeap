@@ -28,11 +28,12 @@ type TextWord struct {
 	End    *float64 `json:"end"`
 }
 type TextSentence struct {
-	ID    string     `json:"id"`
-	Text  string     `json:"text"`
-	Start *float64   `json:"start"`
-	End   *float64   `json:"end"`
-	Words []TextWord `json:"words"`
+	ID            string     `json:"id"`
+	Text          string     `json:"text"`
+	TranslationZh string     `json:"translationZh,omitempty"`
+	Start         *float64   `json:"start"`
+	End           *float64   `json:"end"`
+	Words         []TextWord `json:"words"`
 }
 type TextParagraph struct {
 	ID        string         `json:"id"`

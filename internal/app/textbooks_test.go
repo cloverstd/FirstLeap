@@ -30,7 +30,7 @@ func textbookFixture(t *testing.T) (*App, TextLesson) {
 		t.Fatalf("audio fixture: %s %v", output, err)
 	}
 	l := TextLesson{Book: 1, Lesson: 1, Label: "Lesson 1 & 2", TitleEn: "Repeated sentence", Duration: 6, Revision: "fixture-v1", Alignment: "ready", Translation: []string{"译文"}, Vocabulary: []TextVocabulary{{ID: "v0", Word: "test", PronunciationID: "0123456789abcdef01234567"}}, Paragraphs: []TextParagraph{{ID: "p0", Sentences: []TextSentence{
-		{ID: "s0", Text: "The same sentence.", Start: number(0.2), End: number(1.5), Words: []TextWord{{ID: "s0-w0", Text: "same", Start: number(0.5), End: number(1)}}},
+		{ID: "s0", Text: "The same sentence.", TranslationZh: "同一个句子。", Start: number(0.2), End: number(1.5), Words: []TextWord{{ID: "s0-w0", Text: "same", Start: number(0.5), End: number(1)}}},
 		{ID: "s1", Text: "The same sentence.", Start: number(2.2), End: number(3.5), Words: []TextWord{{ID: "s1-w0", Text: "same", Start: number(2.5), End: number(3)}}},
 	}}}}
 	dir := filepath.Join(a.libraryRoot(), "book1")
@@ -58,6 +58,11 @@ func TestTextbooksIndependentCatalogAndAccess(t *testing.T) {
 		if bytes.Contains(w.Body.Bytes(), []byte(a.cfg.TextbookRoot)) || bytes.Contains(w.Body.Bytes(), []byte(a.cfg.DataRoot)) {
 			t.Fatal("private path exposed")
 		}
+	}
+	var detail TextLesson
+	response := request(a, "GET", "/api/books/1/lessons/1", nil)
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil || detail.Paragraphs[0].Sentences[0].TranslationZh != "同一个句子。" {
+		t.Fatal("sentence translation lost in textbook API")
 	}
 	for _, path := range []string{"/api/books/0", "/api/books/5", "/api/books/1/lessons/2", "/api/books/1/lessons/1/clips/unknown", "/api/books/1/lessons/1/clips/..%2Fsecret", "/api/pronunciations/invalid", "/api/books/1/downloads/txt"} {
 		if w := request(a, "GET", path, nil); w.Code != 404 {
