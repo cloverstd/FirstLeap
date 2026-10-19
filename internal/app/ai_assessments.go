@@ -39,6 +39,7 @@ type assessmentAnswer struct {
 	Choice   int                `json:"choice"`
 	Correct  bool               `json:"correct"`
 	Skipped  bool               `json:"skipped"`
+	Unknown  bool               `json:"unknown,omitempty"`
 }
 type assessmentSession struct {
 	ID              string              `json:"id"`
@@ -178,10 +179,19 @@ func (s *aiService) assessmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/assessments/{id}/answers", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			QuestionID string `json:"questionId"`
-			Choice     int    `json:"choice"`
+			Choice     *int   `json:"choice"`
+			Unknown    bool   `json:"unknown"`
 		}
 		if !decodeBody(w, r, &req) {
 			return
+		}
+		if (req.Unknown && req.Choice != nil) || (!req.Unknown && req.Choice == nil) {
+			failure(w, 400, "请选择一个答案或“不知道”")
+			return
+		}
+		choice := -2 // A distinct persisted value for an explicit "I don't know" answer.
+		if req.Choice != nil {
+			choice = *req.Choice
 		}
 		id := r.PathValue("id")
 		s.mu.Lock()
@@ -202,19 +212,19 @@ func (s *aiService) assessmentRoutes(mux *http.ServeMux) {
 				return
 			}
 		}
-		if a.Question == nil || a.Question.ID != req.QuestionID || req.Choice < -1 || req.Choice > 3 || (req.Choice >= len(a.Question.Options)) {
+		if a.Question == nil || a.Question.ID != req.QuestionID || (!req.Unknown && (choice < -1 || choice > 3 || choice >= len(a.Question.Options))) || (req.Unknown && a.Question.Unavailable) {
 			s.mu.Unlock()
 			failure(w, 409, "题目已更新，请重新读取测评")
 			return
 		}
-		if req.Choice == -1 && !a.Question.Unavailable && a.Question.Dimension != "listening" {
+		if choice == -1 && !a.Question.Unavailable && a.Question.Dimension != "listening" {
 			s.mu.Unlock()
 			failure(w, 400, "请选择一个答案")
 			return
 		}
 		before := copyValue(*a)
 		q := *a.Question
-		a.Answers = append(a.Answers, assessmentAnswer{Question: q, Choice: req.Choice, Correct: req.Choice == q.Answer && req.Choice >= 0, Skipped: req.Choice < 0})
+		a.Answers = append(a.Answers, assessmentAnswer{Question: q, Choice: choice, Correct: !req.Unknown && choice == q.Answer && choice >= 0, Skipped: choice == -1, Unknown: req.Unknown})
 		a.Question = nil
 		if s.saveState() != nil {
 			*a = before
@@ -310,7 +320,7 @@ func (s *aiService) evaluateProfile(ctx context.Context, cfg aiSettings, base pr
 		Weaknesses []string       `json:"weaknesses"`
 		Reason     string         `json:"reason"`
 	}
-	schema := `返回 {"level":-1到4整数,"abilities":{"vocabulary":-1到4整数,"grammar":-1到4整数,"reading":-1到4整数,"listening":-1到4整数},"weaknesses":["有证据支持的薄弱项"],"reason":"解释判断依据"}。-1未评估，0入门，1初级，2中级，3中高级，4高级。不要评估口语或写作。`
+	schema := `返回 {"level":-1到4整数,"abilities":{"vocabulary":-1到4整数,"grammar":-1到4整数,"reading":-1到4整数,"listening":-1到4整数},"weaknesses":["有证据支持的薄弱项"],"reason":"解释判断依据"}。-1未评估，0入门，1初级，2中级，3中高级，4高级。不要评估口语或写作。答题记录中 unknown=true、choice=-2 表示学习者明确选择“不知道”，是尚未掌握的有效答题证据。skipped=true 表示因题目或音频不可用而跳过，不作为答错证据。`
 	if err := s.structured(ctx, cfg, cfg.Prompts.Evaluation+"\n"+schema, map[string]any{"profile": base, "evidence": evidence, "feedbackOnly": feedback}, &output); err != nil {
 		return base, "", err
 	}
@@ -432,7 +442,7 @@ func (s *aiService) advanceAssessment(id string) string {
 			q.Text = "当前没有可用原音，听力部分暂未测评。可以稍后重新测评。"
 			q.Unavailable = true
 		} else {
-			schema := `返回 {"text":"中文题干，阅读题附英文材料，听力题不泄露原音文字","options":["选项A","选项B","选项C","选项D"],"answer":0到3正确选项下标,"explanation":"中文答案解析","difficulty":0到4整数,"audioIndex":听力所选原音下标，其他为-1}。不要调用任何工具。`
+			schema := `返回 {"text":"中文题干，阅读题附英文材料，听力题不泄露原音文字","options":["选项A","选项B","选项C","选项D"],"answer":0到3正确选项下标,"explanation":"中文答案解析","difficulty":0到4整数,"audioIndex":听力所选原音下标，其他为-1}。不要调用任何工具。应用会额外提供“不知道”选项，不要将它加入 options。priorAnswers 中 unknown=true、choice=-2 表示学习者明确选择“不知道”，请作为尚未掌握的证据调整难度；skipped=true 是因题目或音频不可用而跳过，不作为答错证据。`
 			var generated struct {
 				Text        string   `json:"text"`
 				Options     []string `json:"options"`

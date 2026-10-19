@@ -30,7 +30,9 @@ type Answer = {
   choice: number;
   correct: boolean;
   skipped: boolean;
+  unknown?: boolean;
 };
+type AssessmentChoice = number | "unknown";
 type Session = {
   id: string;
   status: string;
@@ -249,20 +251,20 @@ function Assessment({ refresh }: { refresh: () => void }) {
     [jobId, setJobId] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [choice, setChoice] = useState(-1),
+    [choice, setChoice] = useState<AssessmentChoice | null>(null),
     [audioError, setAudioError] = useState(false);
   const audio = useRef<HTMLAudioElement>(null);
   const accept = (data: AssessmentResponse) => {
     setSession(data.session);
     setJobId(data.jobId || "");
-    setChoice(-1);
+    setChoice(null);
     setBusy(false);
   };
   const job = useJob(jobId, (state) => {
     setBusy(false);
     if (state.status === "done") {
       setSession(state.result as Session);
-      setChoice(-1);
+      setChoice(null);
       refresh();
       sessions.reload();
     } else setError(state.error || "测评准备失败，请重试");
@@ -291,7 +293,7 @@ function Assessment({ refresh }: { refresh: () => void }) {
       setError((e as Error).message);
     }
   };
-  const answer = async (selected: number) => {
+  const answer = async (selected: AssessmentChoice) => {
     if (!session?.question) return;
     setBusy(true);
     setError("");
@@ -304,7 +306,9 @@ function Assessment({ refresh }: { refresh: () => void }) {
             method: "POST",
             body: JSON.stringify({
               questionId: session.question.id,
-              choice: selected,
+              ...(selected === "unknown"
+                ? { unknown: true }
+                : { choice: selected }),
             }),
           },
         ),
@@ -342,6 +346,7 @@ function Assessment({ refresh }: { refresh: () => void }) {
       <p>
         16 道题，AI
         会根据回答调整难度。结果帮助老师选择适合你的学习起点与讲解方式。口语和写作可在档案中自评。
+        不会的题可以选择“不知道”，无需猜答案。
       </p>
       {!session && (
         <div className="ai-assessment-start">
@@ -375,11 +380,13 @@ function Assessment({ refresh }: { refresh: () => void }) {
           {last && (
             <details className="assessment-answer">
               <summary>
-                {last.skipped
-                  ? "上一题已跳过，不计为答错"
-                  : last.correct
-                    ? "上一题答对了"
-                    : "上一题需要再练习"}
+                {last.unknown
+                  ? "上一题选择了“不知道”"
+                  : last.skipped
+                    ? "上一题已跳过，不计为答错"
+                    : last.correct
+                      ? "上一题答对了"
+                      : "上一题需要再练习"}
               </summary>
               <p>{last.question.explanation}</p>
               {last.question.audio && (
@@ -441,6 +448,18 @@ function Assessment({ refresh }: { refresh: () => void }) {
                     {text}
                   </label>
                 ))}
+                {!q.unavailable && (
+                  <label className={choice === "unknown" ? "selected" : ""}>
+                    <input
+                      type="radio"
+                      name="assessment-answer"
+                      value="unknown"
+                      checked={choice === "unknown"}
+                      onChange={() => setChoice("unknown")}
+                    />
+                    不知道
+                  </label>
+                )}
               </fieldset>
               {audioError && (
                 <p role="alert">
@@ -466,8 +485,10 @@ function Assessment({ refresh }: { refresh: () => void }) {
                 </div>
               ) : (
                 <Button
-                  disabled={choice < 0}
-                  onClick={() => void answer(choice)}
+                  disabled={choice === null}
+                  onClick={() => {
+                    if (choice !== null) void answer(choice);
+                  }}
                 >
                   提交答案
                 </Button>

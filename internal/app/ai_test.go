@@ -380,12 +380,33 @@ func TestProgressFieldConflictsMigrationAndRestart(t *testing.T) {
 func TestAdaptiveAssessmentHidesAnswerResumesAndHonorsLocks(t *testing.T) {
 	a := aiFixture(t)
 	var calls atomic.Int32
+	var sawUnknownInQuestion, sawUnknownInEvaluation atomic.Bool
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		var input map[string]any
+		var input struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
 		_ = json.NewDecoder(r.Body).Decode(&input)
-		raw, _ := json.Marshal(input)
-		if strings.Contains(string(raw), "有证据支持的薄弱项") {
+		var payload struct {
+			PriorAnswers []assessmentAnswer `json:"priorAnswers"`
+			Evidence     []assessmentAnswer `json:"evidence"`
+		}
+		_ = json.Unmarshal([]byte(input.Messages[len(input.Messages)-1].Content), &payload)
+		for _, answer := range payload.PriorAnswers {
+			if answer.Unknown && answer.Choice == -2 && !answer.Correct && !answer.Skipped {
+				sawUnknownInQuestion.Store(true)
+			}
+		}
+		if len(payload.Evidence) > 0 {
+			unknown := 0
+			for _, answer := range payload.Evidence {
+				if answer.Unknown && answer.Choice == -2 && !answer.Correct && !answer.Skipped {
+					unknown++
+				}
+			}
+			sawUnknownInEvaluation.Store(unknown == 4)
 			chatJSON(w, `{"level":2,"abilities":{"vocabulary":2,"grammar":2,"reading":2,"listening":2},"weaknesses":["时态"],"reason":"依据测评答题记录"}`)
 			return
 		}
@@ -427,6 +448,10 @@ func TestAdaptiveAssessmentHidesAnswerResumesAndHonorsLocks(t *testing.T) {
 			choice = -1
 		}
 		answer := map[string]any{"questionId": q.ID, "choice": choice}
+		if i < 4 && !q.Unavailable {
+			delete(answer, "choice")
+			answer["unknown"] = true
+		}
 		w = aiRequest(t, a, "POST", "/api/assessments/"+id+"/answers", answer)
 		state = waitAIJob(t, a, jobFromResponse(t, w))
 		if state.Status != "done" {
@@ -438,6 +463,13 @@ func TestAdaptiveAssessmentHidesAnswerResumesAndHonorsLocks(t *testing.T) {
 			t.Fatal("answer replay regenerated question")
 		}
 	}
+	if !sawUnknownInQuestion.Load() || !sawUnknownInEvaluation.Load() {
+		t.Fatal("unknown answers were not supplied to adaptive questions and final evaluation")
+	}
+	restarted, err := New(a.cfg)
+	if err != nil || !restarted.ai.state.Assessments[id].Answers[0].Unknown {
+		t.Fatal("unknown answer did not survive restart")
+	}
 	a.ai.mu.Lock()
 	defer a.ai.mu.Unlock()
 	if len(a.ai.state.Assessments[id].Answers) != 16 || a.ai.state.Assessments[id].Status != "done" || a.ai.state.Profile.Level != 2 {
@@ -446,8 +478,27 @@ func TestAdaptiveAssessmentHidesAnswerResumesAndHonorsLocks(t *testing.T) {
 	if a.ai.state.Profile.Abilities["vocabulary"].Level != 0 || a.ai.state.Profile.Abilities["speaking"].Level != -1 {
 		t.Fatal("evaluation overwrote lock or untested ability")
 	}
+	if a.ai.state.Profile.Abilities["grammar"].Level != 2 {
+		t.Fatal("unknown answers must count as answered evidence, rather than unscored skips")
+	}
 	if len(a.ai.state.Progress.Tracks) != 0 {
 		t.Fatal("assessment modified course progress")
+	}
+}
+
+func TestAssessmentRejectsMissingOrConflictingUnknownAnswers(t *testing.T) {
+	a := aiFixture(t)
+	a.ai.state.Assessments["session"] = &assessmentSession{ID: "session", Status: "active", Question: &assessmentQuestion{ID: "q1", Dimension: "grammar", Options: []string{"a", "b", "c", "d"}}}
+	for _, answer := range []map[string]any{
+		{"questionId": "q1"},
+		{"questionId": "q1", "choice": 0, "unknown": true},
+		{"questionId": "q1", "choice": -2},
+		{"questionId": "q1", "choice": 4},
+	} {
+		w := aiRequest(t, a, "POST", "/api/assessments/session/answers", answer)
+		if w.Code < 400 || len(a.ai.state.Assessments["session"].Answers) != 0 || a.ai.state.Assessments["session"].Question == nil {
+			t.Fatalf("invalid answer recorded: %d %s", w.Code, w.Body.String())
+		}
 	}
 }
 func TestImageFailureKeepsPreviousVersionAndDownloadHasNoKey(t *testing.T) {

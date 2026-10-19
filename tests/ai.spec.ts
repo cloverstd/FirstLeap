@@ -605,10 +605,28 @@ test("dynamic assessment updates abilities and server progress reaches another d
     await expect(
       section.getByText(`第 ${i + 1} 题`, { exact: false }),
     ).toBeVisible();
-    await section.getByRole("radio").first().check();
+    await expect(
+      section.getByRole("radio", { name: "不知道", exact: true }),
+    ).toBeVisible();
+    await expect(
+      section.getByRole("button", { name: "提交答案", exact: true }),
+    ).toBeDisabled();
+    if (i < 4)
+      await section.getByRole("radio", { name: "不知道", exact: true }).check();
+    else await section.getByRole("radio").first().check();
     await section
       .getByRole("button", { name: "提交答案", exact: true })
       .click();
+    if (i === 0) {
+      await expect(
+        section.getByText("上一题选择了“不知道”", { exact: true }),
+      ).toBeVisible();
+      await page.reload();
+      await page.getByRole("button", { name: "开始或继续测评" }).click();
+      await expect(
+        section.getByText("上一题选择了“不知道”", { exact: true }),
+      ).toBeVisible();
+    }
   }
   await expect(
     page.getByRole("heading", { name: "测评已完成，学习档案已更新" }),
@@ -620,6 +638,23 @@ test("dynamic assessment updates abilities and server progress reaches another d
   expect(profile.abilities.listening.level).toBe(1);
   expect(profile.abilities.speaking.level).toBe(-1);
   expect(counters.questions).toBe(16);
+  const sessions = await (
+    await request.get(origin + "/api/assessments")
+  ).json();
+  const { session } = await (
+    await request.get(origin + "/api/assessments/" + sessions[0].id)
+  ).json();
+  expect(
+    session.answers.filter((answer: { unknown?: boolean }) => answer.unknown),
+  ).toHaveLength(4);
+  for (const answer of session.answers.slice(0, 4)) {
+    expect(answer).toMatchObject({
+      unknown: true,
+      choice: -2,
+      correct: false,
+      skipped: false,
+    });
+  }
   await page.goto(origin + "/books/1/lessons/1");
   await page
     .getByRole("button", { name: "第一册第1课，标记已学", exact: true })
