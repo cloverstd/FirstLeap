@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildMarkers, groupMarkers } from "./textbookMarkers";
+import {
+  buildMarkers,
+  groupMarkers,
+  markerAtPosition,
+} from "./textbookMarkers";
 const paragraphs = [
   {
     id: "p1",
@@ -32,6 +36,21 @@ describe("audio boundary markers", () => {
       ["p2-start", 8],
       ["p2-end", 10],
     ]);
+  });
+  it("maps each boundary to the same content anchor and follows through gaps", () => {
+    const markers = buildMarkers(paragraphs, "sentence", 12);
+    expect(markers.filter((m) => m.time === 4).map((m) => m.targetId)).toEqual([
+      "s1",
+      "s2",
+    ]);
+    expect(markerAtPosition(markers, 1)).toBeUndefined();
+    expect(markerAtPosition(markers, 3)?.targetId).toBe("s1");
+    expect(markerAtPosition(markers, 4)?.targetId).toBe("s2");
+    expect(markerAtPosition(markers, 7)?.targetId).toBe("s2");
+    expect(markerAtPosition(markers, 10)?.targetId).toBe("s3");
+    expect(
+      markerAtPosition(buildMarkers(paragraphs, "paragraph", 12), 7)?.targetId,
+    ).toBe("p1");
   });
   it("makes every dense marker accessible without merging the whole track", () => {
     const markers = buildMarkers(paragraphs, "sentence", 12);

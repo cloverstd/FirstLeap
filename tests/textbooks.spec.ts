@@ -191,6 +191,16 @@ async function loaded(page: Page) {
   );
 }
 
+async function playerAction(page: Page, name: string) {
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
+async function selectMarker(page: Page, name: RegExp) {
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+  await page.getByRole("button", { name }).click();
+}
+
 test("four books, searchable contents and mobile reading stay usable without video", async ({
   page,
 }) => {
@@ -217,7 +227,7 @@ test("four books, searchable contents and mobile reading stay usable without vid
       ),
     ).toBe(true);
     await expect(
-      page.getByRole("button", { name: "播放整课", exact: true }),
+      page.getByRole("button", { name: "播放器设置", exact: true }),
     ).toBeVisible();
     if (width < 800) {
       await page.getByRole("tab", { name: "单词 · 1" }).click();
@@ -311,7 +321,7 @@ test("word clips use the selected occurrence and repeat on their natural end", a
     .toBeGreaterThan(beforeVocabulary + 1);
   await page.getByRole("button", { name: "暂停精听" }).click();
   if (isMobile) {
-    await page.getByRole("button", { name: "播放整课", exact: true }).click();
+    await playerAction(page, "播放整课");
     await expect(page.getByRole("tab", { name: "单词 · 1" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -325,7 +335,7 @@ test("full lesson seek, highlights and resume survive temporary point reading", 
 }) => {
   await page.goto("/books/1/lessons/1");
   await loaded(page);
-  await page.getByRole("button", { name: "播放整课" }).click();
+  await playerAction(page, "播放整课");
   await loaded(page);
   await page.locator("audio").evaluate((a: HTMLAudioElement) => {
     a.pause();
@@ -383,7 +393,7 @@ test("classroom text mode releases video and shares progress with the ebook", as
   await page.getByRole("button", { name: "课文精听", exact: true }).click();
   await loaded(page);
   await expect(page.locator("video")).toHaveCount(0);
-  await page.getByRole("button", { name: "播放整课" }).click();
+  await playerAction(page, "播放整课");
   await loaded(page);
   await page.locator("audio").evaluate((a: HTMLAudioElement) => {
     a.pause();
@@ -420,7 +430,7 @@ test("sentence navigation retains its position after a natural clip end", async 
     .click();
   await loaded(page);
   await page.waitForFunction(() => document.querySelector("audio")!.ended);
-  await page.getByRole("button", { name: "下一句", exact: true }).click();
+  await playerAction(page, "下一句");
   await loaded(page);
   await expect
     .poll(() =>
@@ -428,6 +438,7 @@ test("sentence navigation retains its position after a natural clip end", async 
     )
     .toContain("/clips/s2");
   await page.waitForFunction(() => document.querySelector("audio")!.ended);
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "下一句", exact: true }),
   ).toBeDisabled();
@@ -638,10 +649,10 @@ test("both boundary kinds seek without changing playback and preferences are per
   );
   await page.goto("/books/1/lessons/1");
   await loaded(page);
-  const seekToMarker = async (name: RegExp) => {
-    await page.getByRole("button", { name: "全部断点", exact: true }).click();
-    await page.getByRole("button", { name }).click();
-  };
+  const seekToMarker = (name: RegExp) => selectMarker(page, name);
+  await expect(
+    page.getByRole("tab", { name: "句子起止", exact: true }),
+  ).toHaveCount(0);
   await seekToMarker(/^第 2 句起点/);
   await loaded(page);
   await expect
@@ -660,7 +671,9 @@ test("both boundary kinds seek without changing playback and preferences are per
   await seekToMarker(/^第 2 句起点/);
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
   await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await page.getByRole("tab", { name: "段落起止", exact: true }).click();
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await seekToMarker(/^第 1 段终点/);
   await expect
     .poll(() =>
@@ -668,13 +681,16 @@ test("both boundary kinds seek without changing playback and preferences are per
     )
     .toBeCloseTo(6.8, 1);
   await page.goto("/books/1/lessons/3");
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
     page.getByRole("tab", { name: "句子起止", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.goto("/books/1/lessons/1");
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
     page.getByRole("tab", { name: "段落起止", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "第一册第1课，标记已学", exact: true }),
   ).toBeVisible();
@@ -755,6 +771,35 @@ test("classroom theme has no horizontal overflow and keeps the audio dock usable
     await expect(
       page.getByRole("button", { name: "播放精听", exact: true }),
     ).toBeVisible();
+    const dock = await page.locator(".reading-dock").boundingBox();
+    expect(dock!.height).toBeLessThanOrEqual(56);
+    const controls = [
+      page.getByRole("button", { name: "播放精听", exact: true }),
+      page.getByRole("slider", { name: "课文音频进度" }),
+      page.getByRole("button", { name: "循环模式", exact: true }),
+      page.getByRole("combobox", { name: "精听倍速" }),
+      page.getByRole("button", { name: "播放器设置", exact: true }),
+    ];
+    for (const control of controls) {
+      const box = await control.boundingBox();
+      expect(
+        Math.abs(box!.y + box!.height / 2 - dock!.y - dock!.height / 2),
+      ).toBeLessThan(2);
+    }
+    await expect(
+      page.getByRole("tab", { name: "句子起止", exact: true }),
+    ).toHaveCount(0);
+    const rail = await page.locator('[data-slot="slider-track"]').boundingBox();
+    for (const marker of await page
+      .locator(
+        '.reading-dock button[aria-label^="跳到"], .reading-dock button[aria-label$="个音频断点"]',
+      )
+      .all()) {
+      const box = await marker.boundingBox();
+      expect(
+        Math.abs(box!.y + box!.height / 2 - rail!.y - rail!.height / 2),
+      ).toBeLessThan(1);
+    }
   }
   await page.setViewportSize({
     width: testInfo.project.name === "mobile" ? 390 : 1440,
@@ -764,4 +809,117 @@ test("classroom theme has no horizontal overflow and keeps the audio dock usable
     path: testInfo.outputPath("reading.png"),
     fullPage: true,
   });
+});
+
+test("inline markers and dragging synchronize passage anchors without starting audio", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 800 });
+  const shared = {
+    ...detail,
+    paragraphs: [
+      { id: "p1", sentences: [sentence("s1", 1), sentence("s2", 2.8)] },
+      ...Array.from({ length: 12 }, (_, i) => ({
+        id: `note${i}`,
+        note: `Reading note ${i + 1}`,
+        sentences: [],
+      })),
+      { id: "p2", sentences: [sentence("s3", 6)] },
+    ],
+  };
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({ json: shared }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await selectMarker(page, /^第 1 句终点/);
+  const first = page.locator('[id="reading-1:1-s1"]');
+  await expect(first).toHaveAttribute("aria-current", "true");
+  await expect(page.locator('[id="reading-1:1-s2"]')).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 2.8);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+
+  // This target is far below the first paragraph: a paused inline seek must
+  // scroll it into view, clear vocabulary mode, and retain its exact anchor.
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  await page.getByRole("button", { name: /^跳到第 3 句起点/ }).click();
+  const last = page.locator('[id="reading-1:1-s3"]');
+  await expect(last).toHaveAttribute("aria-current", "true");
+  await expect(last).toBeInViewport({ ratio: 0.95 });
+  await expect
+    .poll(async () => {
+      const target = await last.boundingBox();
+      const dock = await page.locator(".reading-dock").boundingBox();
+      return target!.y + target!.height <= dock!.y;
+    })
+    .toBe(true);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+
+  // Start dragging the thumb while it overlaps the marker. Crossing the other
+  // markers must keep pointer capture until release.
+  const thumb = await page
+    .getByRole("slider", { name: "课文音频进度" })
+    .boundingBox();
+  const slider = await page.locator('[data-slot="slider"]').boundingBox();
+  await page.mouse.move(
+    thumb!.x + thumb!.width / 2,
+    thumb!.y + thumb!.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    slider!.x + 8 + (slider!.width - 16) * 0.9,
+    slider!.y + slider!.height / 2,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () =>
+      Math.abs(
+        9 -
+          (await page
+            .locator("audio")
+            .evaluate((a: HTMLAudioElement) => a.currentTime)),
+      ),
+    )
+    .toBeLessThan(0.15);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+  await page.getByRole("tab", { name: "段落起止", exact: true }).click();
+  await page.getByRole("button", { name: /^第 1 段终点/ }).click();
+  await expect(page.locator('[id="reading-1:1-paragraph-p1"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 4.6);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await expect(page.locator('[id="reading-1:1-paragraph-p2"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+});
+
+test("dense inline boundaries open an exact selection on a narrow screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await page
+    .getByRole("button", { name: "2 个音频断点", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: /^第 1 句终点/ }).click();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 3.8);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await expect(page.locator('[id="reading-1:1-s1"]')).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
