@@ -27,8 +27,10 @@ func (s *aiService) providerPreview(req providerSettingsRequest) (modelConfig, e
 		saved = settings.Text.modelConfig
 	case "image":
 		saved = settings.Image.modelConfig
+	case "tts":
+		saved = settings.TTS.modelConfig
 	default:
-		return modelConfig{}, fmt.Errorf("请选择文字模型或生图模型")
+		return modelConfig{}, fmt.Errorf("请选择文字、生图或语音模型")
 	}
 	c := req.Config
 	c.BaseURL = strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")

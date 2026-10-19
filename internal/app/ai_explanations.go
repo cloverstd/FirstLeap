@@ -46,28 +46,30 @@ type learningContext struct {
 	Stage    string         `json:"stage"`
 }
 type explanation struct {
-	ID        string           `json:"id"`
-	Book      int              `json:"book"`
-	Lesson    int              `json:"lesson"`
-	Target    aiTarget         `json:"target"`
-	Content   string           `json:"content"`
-	Images    []aiImage        `json:"images"`
-	Warnings  []string         `json:"warnings"`
-	Context   learningContext  `json:"context"`
-	CreatedAt string           `json:"createdAt"`
-	Model     string           `json:"model"`
-	Usage     []map[string]any `json:"usage"`
-	ToolsUsed []string         `json:"toolsUsed"`
+	ID             string           `json:"id"`
+	Book           int              `json:"book"`
+	Lesson         int              `json:"lesson"`
+	Target         aiTarget         `json:"target"`
+	Content        string           `json:"content"`
+	ContentVersion string           `json:"contentVersion"`
+	Images         []aiImage        `json:"images"`
+	Warnings       []string         `json:"warnings"`
+	Context        learningContext  `json:"context"`
+	CreatedAt      string           `json:"createdAt"`
+	Model          string           `json:"model"`
+	Usage          []map[string]any `json:"usage"`
+	ToolsUsed      []string         `json:"toolsUsed"`
 }
 type jobSnapshot struct {
-	ID       string    `json:"id"`
-	Status   string    `json:"status"`
-	Text     string    `json:"text"`
-	Images   []aiImage `json:"images"`
-	Warnings []string  `json:"warnings"`
-	Error    string    `json:"error,omitempty"`
-	Result   any       `json:"result,omitempty"`
-	Sequence uint64    `json:"sequence"`
+	ID       string      `json:"id"`
+	Status   string      `json:"status"`
+	Text     string      `json:"text"`
+	Images   []aiImage   `json:"images"`
+	Warnings []string    `json:"warnings"`
+	Error    string      `json:"error,omitempty"`
+	Result   any         `json:"result,omitempty"`
+	Sequence uint64      `json:"sequence"`
+	Speech   *speechView `json:"speech,omitempty"`
 }
 type aiJob struct {
 	mu    sync.Mutex
@@ -82,6 +84,9 @@ func (j *aiJob) update(fn func(*jobSnapshot)) {
 }
 func (j *aiJob) snapshot() jobSnapshot { j.mu.Lock(); defer j.mu.Unlock(); return copyValue(j.state) }
 func (s *aiService) startJob(key string, run func(context.Context, *aiJob) (any, error)) string {
+	return s.startJobWithTimeout(key, 10*time.Minute, run)
+}
+func (s *aiService) startJobWithTimeout(key string, timeout time.Duration, run func(context.Context, *aiJob) (any, error)) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id := s.pending[key]; id != "" {
@@ -103,7 +108,11 @@ func (s *aiService) startJob(key string, run func(context.Context, *aiJob) (any,
 	s.jobs[id] = j
 	s.pending[key] = id
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithCancel(context.Background())
+		if timeout > 0 {
+			cancel()
+			ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		}
 		defer cancel()
 		result, err := run(ctx, j)
 		j.update(func(v *jobSnapshot) {
@@ -509,12 +518,17 @@ func (s *aiService) generateExplanation(ctx context.Context, j *aiJob, cfg aiSet
 		}
 	}
 	result.Content = strings.Join(parts, "\n\n")
+	result.ContentVersion = contentHash(result.Content)
 	result.ToolsUsed = rt.Used
 	if strings.TrimSpace(turns[len(turns)-1].Text) == "" {
 		return nil, fmt.Errorf("AI 没有返回详解")
 	}
 	if err = writeJSONAtomic(s.explanationPath(key), result); err != nil {
 		return nil, fmt.Errorf("详解缓存保存失败")
+	}
+	if cfg.TTS.Enabled {
+		// Speech is an independent job: its failure must never fail the explanation.
+		_, _ = s.ensureSpeech(result, cfg, false, false)
 	}
 	return result, nil
 }
@@ -631,6 +645,7 @@ func (s *aiService) readExplanation(path string, out *explanation) error {
 	if err := loadJSON(path, out); err != nil {
 		return err
 	}
+	out.ContentVersion = contentHash(out.Content)
 	for i, image := range out.Images {
 		var current aiImage
 		if loadJSON(filepath.Join(s.root, "images", image.ID+".json"), &current) == nil && current.Version != "" {

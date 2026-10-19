@@ -1,6 +1,67 @@
 .ai-page {
   padding-block: 32px 64px;
 }
+.ai-speech {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+.ai-speech-heading,
+.ai-speech-controls,
+.ai-speech-rate,
+.ai-speech-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.ai-speech-heading {
+  color: var(--primary);
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.ai-speech-controls {
+  justify-content: space-between;
+  margin: 14px 0;
+}
+.ai-speech-rate {
+  gap: 8px;
+  font-size: 12px;
+}
+.ai-speech-rate select {
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  border-radius: 8px;
+  padding: 6px;
+}
+.ai-speech-timeline {
+  width: 100%;
+  accent-color: var(--primary);
+}
+.ai-speech-actions {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.ai-speech-script {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.ai-speech-script summary {
+  cursor: pointer;
+}
+.ai-speech-script p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.9;
+  margin-top: 10px;
+}
+.ai-card > audio {
+  width: 100%;
+  margin-top: 16px;
+}
 .ai-page-heading {
   display: flex;
   align-items: center;

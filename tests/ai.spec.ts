@@ -12,6 +12,7 @@ import {
   writeFileSync,
   copyFileSync,
   rmSync,
+  readFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -23,6 +24,11 @@ let binaryRoot: string,
   origin: string,
   providerURL: string;
 let modelRequests: Record<string, unknown>[] = [];
+let speechCalls = 0,
+  scriptCalls = 0,
+  failSpeech = false,
+  speechGateAfter = 1,
+  speechGate: Promise<void> | null = null;
 let counters = {
     explanations: 0,
     images: 0,
@@ -66,6 +72,11 @@ test.beforeEach(async ({ request }) => {
   modelDelay = 0;
   modelIDs = ["teaching", "illustration", "new-provider-model"];
   modelRequests = [];
+  speechCalls = 0;
+  scriptCalls = 0;
+  failSpeech = false;
+  speechGateAfter = 1;
+  speechGate = null;
   provider = createServer(async (req, res) => {
     if (req.url === "/v1/models" && req.method === "GET") {
       counters.models++;
@@ -89,6 +100,18 @@ test.beforeEach(async ({ request }) => {
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString() || "{}");
     modelRequests.push(input);
+    if (req.url === "/v1/audio/speech") {
+      speechCalls++;
+      if (failSpeech) {
+        res.writeHead(422, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ detail: "speed must be 1.0" }));
+        return;
+      }
+      if (speechCalls > speechGateAfter && speechGate) await speechGate;
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.end(readFileSync(join(runRoot, "audio.mp3")));
+      return;
+    }
     res.setHeader("Content-Type", "application/json");
     if (req.url === "/v1/images/generations") {
       counters.images++;
@@ -134,6 +157,16 @@ test.beforeEach(async ({ request }) => {
       (m: { role?: string; type?: string }) =>
         m.role === "tool" || m.type === "function_call_output",
     );
+    if (JSON.stringify(input).includes("你负责将已完成")) {
+      scriptCalls++;
+      chat(
+        "同学你好，我们先来理解指示代词。This is my bag. 这是我的包。\n" +
+          "这个例句中的 this 指代单数，表示这个。我们先理解句子结构，再自己练习英文表达。".repeat(
+            15,
+          ),
+      );
+      return;
+    }
     const isAssessment = payload.task === "assessment";
     const isEvaluation = payload.task === "evaluation";
     if (!isAssessment && !isEvaluation) {
@@ -237,8 +270,7 @@ test.beforeEach(async ({ request }) => {
       return;
     }
     const context = returned.get_current_learning_state as
-      | { stage?: string }
-      | undefined;
+      { stage?: string } | undefined;
     chat(
       `## 适合你的详解\n\nThis 是单数指示代词，表示“这个”。\n\n例如：**This is my bag.**（这是我的包。）\n\n${context?.stage || "初学"}：先理解句子，再练习表达。`,
     );
@@ -416,6 +448,332 @@ async function openCourse(page: Page) {
   if ((page.viewportSize()?.width || 1440) < 1024)
     await page.getByRole("button", { name: "课程内容", exact: true }).click();
 }
+
+async function enableSpeech(request: APIRequestContext, speed = 1) {
+  const { settings } = await (
+    await request.get(origin + "/api/settings/ai")
+  ).json();
+  settings.tts = {
+    ...settings.tts,
+    enabled: true,
+    baseURL: providerURL + "/v1",
+    model: "local-tts",
+    voice: "teacher",
+    speed,
+    apiKey: "speech-private",
+  };
+  expect(
+    (await request.put(origin + "/api/settings/ai", { data: settings })).ok(),
+  ).toBe(true);
+}
+
+async function restartSpeechBackend(request: APIRequestContext) {
+  backend.kill("SIGTERM");
+  await new Promise<void>((done) => backend.once("exit", () => done()));
+  backend = spawn(join(binaryRoot, "firstleap"), [], {
+    env: {
+      ...process.env,
+      PORT: new URL(origin).port,
+      BIND_ADDRESS: "127.0.0.1",
+      DATA_ROOT: join(runRoot, "data"),
+      TEXTBOOK_ROOT: join(runRoot, "source"),
+      MEDIA_ROOT: join(runRoot, "media"),
+      WEB_ROOT: resolve("web/dist"),
+    },
+    stdio: "ignore",
+  });
+  await expect
+    .poll(async () => {
+      try {
+        return (await request.get(origin + "/health/live")).status();
+      } catch {
+        return 0;
+      }
+    })
+    .toBe(200);
+}
+
+test("TTS settings support manual models, draft preview and persistent private keys", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "chat", false);
+  await page.goto(origin + "/settings");
+  const section = page.getByRole("region", { name: "语音合成配置" });
+  await section.getByLabel("自动生成 AI 详解语音").check();
+  await section
+    .getByLabel("语音 Base URL", { exact: true })
+    .fill(providerURL + "/v1");
+  await section
+    .getByLabel("语音 API Key", { exact: true })
+    .fill("speech-private");
+  await section
+    .getByLabel("语音 Model", { exact: true })
+    .fill("manually-specified-model");
+  await section.getByLabel("语音音色 Voice").fill("Serena");
+  await section.getByLabel("合成语速", { exact: true }).fill("0.85");
+  await section.getByText("讲课风格与兼容参数", { exact: true }).click();
+  await section.getByLabel("语音风格指令字段").selectOption("instruct");
+  await section
+    .getByLabel("语音讲课风格", { exact: true })
+    .fill("像耐心的老师讲课");
+  await section.getByLabel("语音高级参数 JSON").fill('{"lang_code":"zh"}');
+  await section.getByRole("button", { name: "生成短句试听" }).click();
+  await expect(section.getByLabel("语音试听")).toHaveAttribute("src", /^blob:/);
+  expect(speechCalls).toBe(1);
+  expect(scriptCalls).toBe(0);
+  const speech = modelRequests.find(
+    (input) => input.model === "manually-specified-model",
+  )!;
+  expect(speech).toMatchObject({
+    voice: "Serena",
+    speed: 0.85,
+    instruct: "像耐心的老师讲课",
+    lang_code: "zh",
+    response_format: "mp3",
+  });
+  expect(speech).not.toHaveProperty("instructions");
+  const before = await (await request.get(origin + "/api/settings/ai")).json();
+  expect(before.settings.tts.enabled).toBe(false);
+  await page.getByRole("button", { name: "保存系统配置" }).click();
+  await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
+  await expect(section.getByLabel("语音 API Key", { exact: true })).toHaveValue(
+    "",
+  );
+  await page.reload();
+  await expect(section.getByLabel("合成语速", { exact: true })).toHaveValue(
+    "0.85",
+  );
+  await expect(section.getByLabel("语音 Model", { exact: true })).toHaveValue(
+    "manually-specified-model",
+  );
+  const saved = await (await request.get(origin + "/api/settings/ai")).text();
+  expect(saved).not.toContain("speech-private");
+  expect(JSON.parse(saved).settings.tts.keySet).toBe(true);
+});
+
+test("AI lecture plays early segments, waits, coordinates media and survives restart", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "chat", false);
+  await enableSpeech(request);
+  let release!: () => void;
+  speechGate = new Promise<void>((done) => {
+    release = done;
+  });
+  try {
+    await page.goto(origin + "/books/1/lessons/1");
+    await openAI(page);
+    await page
+      .getByRole("button", { name: "生成整课详解", exact: true })
+      .click();
+    const player = page.getByRole("region", { name: "AI 语音讲解" });
+    await expect(
+      player.getByRole("button", { name: "播放 AI 讲解", exact: true }),
+    ).toBeEnabled();
+    expect(scriptCalls).toBe(1);
+    await expect(player.getByRole("status")).toContainText("正在生成语音");
+    const audio = page.locator('audio[aria-label="AI 讲解音频"]');
+    await player.getByLabel("AI 讲解播放倍速").selectOption("1.5");
+    await player
+      .getByRole("button", { name: "播放 AI 讲解", exact: true })
+      .click();
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    await expect
+      .poll(() =>
+        audio.evaluate((element: HTMLAudioElement) => element.playbackRate),
+      )
+      .toBe(1.5);
+    await audio.evaluate((element: HTMLAudioElement) => {
+      element.currentTime = element.duration - 0.05;
+    });
+    await expect(player.getByRole("status")).toContainText("正在等待下一段");
+    release();
+    await expect(player.getByRole("status")).toContainText("语音已保存");
+    await expect(audio).toHaveAttribute("src", /\/segments\/1$/);
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    const generated = speechCalls;
+    await player.getByLabel("AI 讲解播放倍速").selectOption("2");
+    expect(speechCalls).toBe(generated);
+    await expect
+      .poll(() =>
+        audio.evaluate((element: HTMLAudioElement) => element.playbackRate),
+      )
+      .toBe(2);
+    await openCourse(page);
+    await page.getByRole("button", { name: "播放精听", exact: true }).click();
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(true);
+    await openAI(page);
+    await player
+      .getByRole("button", { name: "播放 AI 讲解", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page
+          .getByTestId("textbook-audio")
+          .evaluate((element: HTMLAudioElement) => element.paused),
+      )
+      .toBe(true);
+    await restartSpeechBackend(request);
+    await page.reload();
+    await openAI(page);
+    await expect(player.getByRole("status")).toContainText("语音已保存");
+    await expect(player.getByLabel("AI 讲解播放倍速")).toHaveValue("2");
+    await player
+      .getByRole("button", { name: "播放 AI 讲解", exact: true })
+      .click();
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    expect(speechCalls).toBe(generated);
+    expect(scriptCalls).toBe(1);
+    await player.getByText("查看讲课稿", { exact: true }).click();
+    await expect(player).toContainText("This is my bag.");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  } finally {
+    release();
+  }
+});
+
+test("retrying failed speech after correcting settings plays the first replacement segment", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "chat", false);
+  await enableSpeech(request, 1.1);
+  failSpeech = true;
+  await page.goto(origin + "/books/1/lessons/1");
+  await openAI(page);
+  await page.getByRole("button", { name: "生成整课详解", exact: true }).click();
+  const player = page.getByRole("region", { name: "AI 语音讲解" });
+  const audio = player.getByLabel("AI 讲解音频", { exact: true });
+  await expect(player.getByRole("alert")).toContainText("HTTP 422");
+  await expect(
+    player.getByRole("button", { name: "播放 AI 讲解", exact: true }),
+  ).toBeDisabled();
+
+  await enableSpeech(request);
+  failSpeech = false;
+  speechGateAfter = 2;
+  let release!: () => void;
+  speechGate = new Promise<void>((done) => {
+    release = done;
+  });
+  try {
+    await player.getByRole("button", { name: "重试语音", exact: true }).click();
+    await expect(player.getByRole("status")).toContainText("正在生成语音：1/");
+    await expect(
+      player.getByRole("button", { name: "播放 AI 讲解", exact: true }),
+    ).toBeEnabled();
+    await expect(player.getByLabel("AI 讲解播放进度")).toBeEnabled();
+    await player.getByRole("button", { name: "播放 AI 讲解", exact: true }).click();
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    await expect(audio).toHaveAttribute("src", /\/segments\/0$/);
+    await audio.evaluate((element: HTMLAudioElement) => {
+      element.currentTime = element.duration - 0.05;
+    });
+    await expect(player.getByRole("status")).toContainText("正在等待下一段");
+    release();
+    await expect(player.getByRole("status")).toContainText("语音已保存");
+    await expect(audio).toHaveAttribute("src", /\/segments\/1$/);
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    expect(scriptCalls).toBe(1);
+  } finally {
+    release();
+  }
+});
+
+test("opening a saved explanation automatically adds speech without regenerating text", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "responses", false);
+  await page.goto(origin + "/books/1/lessons/1");
+  await openAI(page);
+  await page.getByRole("button", { name: "生成整课详解", exact: true }).click();
+  await expect(page.getByText("适合你的详解", { exact: true })).toBeVisible();
+  expect(speechCalls).toBe(0);
+  const textCalls = counters.explanations;
+  await enableSpeech(request);
+  await page.reload();
+  await openAI(page);
+  const player = page.getByRole("region", { name: "AI 语音讲解" });
+  await expect(player.getByRole("status")).toContainText("语音已保存");
+  expect(counters.explanations).toBe(textCalls);
+  expect(scriptCalls).toBe(1);
+  expect(speechCalls).toBeGreaterThan(0);
+});
+
+test("regenerating lecture speech preserves playback until the listener pauses", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "chat", false);
+  await enableSpeech(request);
+  await page.goto(origin + "/books/1/lessons/1");
+  await openAI(page);
+  await page.getByRole("button", { name: "生成整课详解", exact: true }).click();
+  const player = page.getByRole("region", { name: "AI 语音讲解" });
+  const audio = page.locator('audio[aria-label="AI 讲解音频"]');
+  await expect(player.getByRole("status")).toContainText("语音已保存");
+  await player
+    .getByRole("button", { name: "播放 AI 讲解", exact: true })
+    .click();
+  await expect
+    .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+    .toBe(false);
+  const oldSource = await audio.getAttribute("src");
+  const oldCalls = speechCalls;
+  let release!: () => void;
+  speechGate = new Promise<void>((done) => {
+    release = done;
+  });
+  try {
+    await player
+      .getByRole("button", { name: "重新生成语音", exact: true })
+      .click();
+    await expect(player.getByRole("status")).toContainText("正在生成语音");
+    await expect(audio).toHaveAttribute("src", oldSource!);
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    release();
+    await expect(player.getByRole("status")).toContainText("语音已保存");
+    await expect(audio).toHaveAttribute("src", oldSource!);
+    expect(speechCalls).toBeGreaterThan(oldCalls);
+    expect(scriptCalls).toBe(1);
+    await player
+      .getByRole("button", { name: "暂停 AI 讲解", exact: true })
+      .click();
+    await expect(audio).not.toHaveAttribute("src", oldSource!);
+    await player
+      .getByRole("button", { name: "播放 AI 讲解", exact: true })
+      .click();
+    await expect
+      .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
+      .toBe(false);
+    await expect(audio).not.toHaveAttribute("src", oldSource!);
+    // The only configurable player option is the playback rate.
+    await expect(player.locator("select")).toHaveCount(1);
+  } finally {
+    release();
+  }
+});
 
 test("settings save independent models and write-only keys", async ({
   page,

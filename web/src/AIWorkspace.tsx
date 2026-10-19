@@ -27,6 +27,7 @@ import {
 import type { TextLesson } from "./Textbooks";
 
 const AIMarkdown = lazy(() => import("./AIMarkdown"));
+const AISpeechPlayer = lazy(() => import("./AISpeechPlayer"));
 
 type Lookup = {
   cached: boolean;
@@ -244,6 +245,14 @@ function ExplanationPanel({
             ? "正在解释，AI 会按需配图…"
             : "正在结合你的学习档案准备详解…"}
         </p>
+      )}
+      {result && !generating && (
+        <Suspense fallback={null}>
+          <AISpeechPlayer
+            key={`${result.id}:${result.contentVersion}`}
+            explanation={result}
+          />
+        </Suspense>
       )}
       {content && (
         <div className="ai-markdown">

@@ -23,7 +23,9 @@ import {
   type AIToolInfo,
   type AISettings as SettingsData,
   type ModelConfig,
+  type TTSConfig,
 } from "./ai";
+import { claimMedia } from "./mediaCoordinator";
 
 type ProviderResult = {
   models: string[];
@@ -37,12 +39,12 @@ function ProviderConnection({
   change,
   disabled,
 }: {
-  group: "text" | "image";
+  group: "text" | "image" | "tts";
   value: ModelConfig;
   change: (key: string, value: unknown) => void;
   disabled: boolean;
 }) {
-  const label = group === "text" ? "文字" : "生图";
+  const label = group === "text" ? "文字" : group === "image" ? "生图" : "语音";
   const [models, setModels] = useState<string[] | null>(null);
   const [pending, setPending] = useState("");
   const [notice, setNotice] = useState({ text: "", error: false });
@@ -118,31 +120,51 @@ function ProviderConnection({
         </Field>
         <Field
           label={`${label} Model`}
-          hint="填写地址与 Key 后，获取模型列表，再从服务商模型中选择。"
+          hint={
+            group === "tts"
+              ? "填写模型名称；可选获取服务商模型列表。"
+              : "填写地址与 Key 后，获取模型列表，再从服务商模型中选择。"
+          }
         >
-          <select
-            value={value.model}
-            onChange={(e) => change("model", e.target.value)}
-            disabled={
-              disabled || !!pending || (!models?.length && !value.model)
-            }
-          >
-            <option value="" disabled>
-              {models ? "请选择服务商模型" : "请先获取模型列表"}
-            </option>
-            {value.model && !models?.includes(value.model) && (
-              <option value={value.model}>
-                {value.model}
-                {models ? "（本次列表未返回）" : "（当前配置）"}
+          {group === "tts" ? (
+            <input
+              value={value.model}
+              list="tts-models"
+              onChange={(e) => change("model", e.target.value)}
+              placeholder="填写 TTS 模型名称"
+            />
+          ) : (
+            <select
+              value={value.model}
+              onChange={(e) => change("model", e.target.value)}
+              disabled={
+                disabled || !!pending || (!models?.length && !value.model)
+              }
+            >
+              <option value="" disabled>
+                {models ? "请选择服务商模型" : "请先获取模型列表"}
               </option>
-            )}
-            {models?.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
+              {value.model && !models?.includes(value.model) && (
+                <option value={value.model}>
+                  {value.model}
+                  {models ? "（本次列表未返回）" : "（当前配置）"}
+                </option>
+              )}
+              {models?.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
+        {group === "tts" && (
+          <datalist id="tts-models">
+            {models?.map((id) => (
+              <option key={id} value={id} />
+            ))}
+          </datalist>
+        )}
         <label className="ai-check">
           <input
             type="checkbox"
@@ -218,6 +240,207 @@ export function Field({
     </label>
   );
 }
+
+function TTSSettings({
+  value,
+  change,
+  disabled,
+  extraText,
+  setExtraText,
+}: {
+  value: TTSConfig;
+  change: (key: string, value: unknown) => void;
+  disabled: boolean;
+  extraText: string;
+  setExtraText: (text: string) => void;
+}) {
+  const [preview, setPreview] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => {
+    controller.current?.abort();
+    setBusy(false);
+    setError("");
+    setPreview("");
+    return () => controller.current?.abort();
+  }, [value, extraText]);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
+  const listen = async () => {
+    const abort = new AbortController();
+    controller.current = abort;
+    setBusy(true);
+    setError("");
+    setPreview("");
+    try {
+      const extra = parseTTSExtra(extraText);
+      const response = await fetch("/api/settings/ai/tts/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: abort.signal,
+        body: JSON.stringify({ config: { ...value, extra } }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "试听失败");
+      }
+      const blob = await response.blob();
+      if (!abort.signal.aborted) setPreview(URL.createObjectURL(blob));
+    } catch (e) {
+      if (!abort.signal.aborted) setError((e as Error).message);
+    } finally {
+      if (!abort.signal.aborted) setBusy(false);
+    }
+  };
+  return (
+    <section className="ai-card ai-tts-settings" aria-label="语音合成配置">
+      <h2>语音合成</h2>
+      <p>
+        把 AI
+        详解改写成老师讲课的口语讲稿，自动生成并保存语音。已有语音保留原音色，重新生成时采用最新设置。
+      </p>
+      <label className="ai-check">
+        <input
+          type="checkbox"
+          checked={value.enabled}
+          onChange={(e) => change("enabled", e.target.checked)}
+        />
+        自动生成 AI 详解语音
+      </label>
+      <ProviderConnection
+        group="tts"
+        value={value}
+        change={change}
+        disabled={disabled}
+      />
+      <div className="ai-form-grid mt-5">
+        <Field
+          label="语音音色 Voice"
+          hint="填写服务商的音色标识；使用参考音频的服务可按需留空。"
+        >
+          <input
+            value={value.voice}
+            onChange={(e) => change("voice", e.target.value)}
+            placeholder="例如 Serena、alloy"
+          />
+        </Field>
+        <Field
+          label="合成语速"
+          hint="决定生成的音频速度；播放器可另外调整收听倍速。"
+        >
+          <input
+            type="number"
+            min={0.25}
+            max={4}
+            step={0.05}
+            value={value.speed}
+            onChange={(e) => change("speed", Number(e.target.value))}
+          />
+        </Field>
+        <Field label="语音格式">
+          <select
+            value={value.format}
+            onChange={(e) => change("format", e.target.value)}
+          >
+            <option value="mp3">MP3</option>
+            <option value="wav">WAV</option>
+          </select>
+        </Field>
+        <Field label="语音单段超时（秒）">
+          <input
+            type="number"
+            min={30}
+            max={1800}
+            value={value.timeout}
+            onChange={(e) => change("timeout", Number(e.target.value))}
+          />
+        </Field>
+      </div>
+      <details>
+        <summary>讲课风格与兼容参数</summary>
+        <Field
+          label="语音风格指令字段"
+          hint="以服务商文档为准；不支持风格指令的模型选择不发送。"
+        >
+          <select
+            value={value.instructionField}
+            onChange={(e) => change("instructionField", e.target.value)}
+          >
+            <option value="none">不发送</option>
+            <option value="instructions">instructions（OpenAI）</option>
+            <option value="instruct">instruct（MLX）</option>
+          </select>
+        </Field>
+        <Field
+          label="语音讲课风格"
+          hint="风格指令字段选择不发送时，此项不传给模型。"
+        >
+          <textarea
+            rows={3}
+            value={value.instructions}
+            onChange={(e) => change("instructions", e.target.value)}
+            placeholder="像耐心的英语老师一样讲解，语气自然，英文例句清晰，重点处适当停顿。"
+          />
+        </Field>
+        <Field
+          label="语音高级参数 JSON"
+          hint="可填写语言、参考音频等服务商扩展参数。参考音频地址／路径需由 TTS 服务识别；不能覆盖音色、语速等基础参数。"
+        >
+          <textarea
+            rows={5}
+            value={extraText}
+            onChange={(e) => setExtraText(e.target.value)}
+            spellCheck={false}
+          />
+        </Field>
+      </details>
+      <div className="ai-provider-actions">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || busy || !value.baseURL || !value.model}
+          onClick={() => void listen()}
+        >
+          {busy ? "正在生成试听…" : "生成短句试听"}
+        </Button>
+      </div>
+      <p className="ai-subtle ai-provider-hint">
+        试听使用当前草稿，会调用一次语音模型，无需先保存。
+      </p>
+      {preview && (
+        <audio
+          aria-label="语音试听"
+          controls
+          src={preview}
+          onPlay={(e) => claimMedia(e.currentTarget)}
+        />
+      )}
+      {error && (
+        <p role="alert" className="ai-provider-status ai-provider-error">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function parseTTSExtra(text: string): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(text || "{}");
+  } catch {
+    throw new Error("语音高级参数必须是有效 JSON 对象");
+  }
+  if (value == null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("语音高级参数必须是 JSON 对象");
+  return value as Record<string, unknown>;
+}
+
 function SettingsForm({
   initial,
   defaults,
@@ -229,19 +452,32 @@ function SettingsForm({
 }) {
   const [form, setForm] = useState(initial),
     [status, setStatus] = useState(""),
-    [busy, setBusy] = useState(false);
-  const model = (group: "text" | "image", key: string, value: unknown) =>
-    setForm((f) => ({ ...f, [group]: { ...f[group], [key]: value } }));
+    [busy, setBusy] = useState(false),
+    [extraText, setExtraText] = useState(
+      JSON.stringify(initial.tts.extra || {}, null, 2),
+    );
+  const model = (
+    group: "text" | "image" | "tts",
+    key: string,
+    value: unknown,
+  ) => setForm((f) => ({ ...f, [group]: { ...f[group], [key]: value } }));
   return (
     <form
       className="ai-form ai-settings-form"
       onSubmit={(event) => {
         event.preventDefault();
+        let extra: Record<string, unknown>;
+        try {
+          extra = parseTTSExtra(extraText);
+        } catch (e) {
+          setStatus((e as Error).message);
+          return;
+        }
         setBusy(true);
         setStatus("");
         void api("/api/settings/ai", {
           method: "PUT",
-          body: JSON.stringify(form),
+          body: JSON.stringify({ ...form, tts: { ...form.tts, extra } }),
         })
           .then(() => {
             setForm((f) => ({
@@ -259,8 +495,17 @@ function SettingsForm({
                 apiKey: "",
                 clearKey: false,
               },
+              tts: {
+                ...f.tts,
+                extra,
+                keySet: !f.tts.clearKey && (!!f.tts.apiKey || f.tts.keySet),
+                apiKey: "",
+                clearKey: false,
+              },
             }));
-            setStatus("配置已保存。已有详解继续使用缓存，新任务使用当前配置。");
+            setStatus(
+              "配置已保存。已有详解与语音继续使用缓存，新任务使用当前配置。",
+            );
           })
           .catch((e) => setStatus(e.message))
           .finally(() => setBusy(false));
@@ -403,6 +648,13 @@ function SettingsForm({
           </details>
         </section>
       ))}
+      <TTSSettings
+        value={form.tts}
+        change={(key, value) => model("tts", key, value)}
+        disabled={busy}
+        extraText={extraText}
+        setExtraText={setExtraText}
+      />
       <section className="ai-card ai-tools-settings" aria-label="AI 工具配置">
         <h2>AI 工具</h2>
         <p>
@@ -481,6 +733,7 @@ function SettingsForm({
             image: "生图风格",
             assessment: "动态测评出题",
             evaluation: "能力评估",
+            speech: "语音讲课稿",
           }) as [keyof SettingsData["prompts"], string][]
         ).map(([key, label]) => (
           <details key={key} open={key === "system"}>
@@ -536,7 +789,7 @@ export function AISettings() {
         <Settings size={24} />
         <div>
           <h1>系统配置</h1>
-          <p>配置文字、生图模型、AI 工具与教学提示词。</p>
+          <p>配置文字、生图、语音模型、AI 工具与教学提示词。</p>
         </div>
       </header>
       {resource.value ? (

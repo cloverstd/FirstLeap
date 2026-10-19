@@ -43,6 +43,7 @@ export type Explanation = {
   lesson: number;
   target: AITarget;
   content: string;
+  contentVersion: string;
   images: AIImage[];
   warnings: string[];
   context: { profile: ProfileData; stage: string };
@@ -86,6 +87,7 @@ export type JobState = {
   warnings: string[];
   error?: string;
   result?: unknown;
+  speech?: SpeechView;
 };
 export type ModelConfig = {
   baseURL: string;
@@ -93,6 +95,30 @@ export type ModelConfig = {
   keySet: boolean;
   clearKey?: boolean;
   model: string;
+};
+export type TTSConfig = ModelConfig & {
+  enabled: boolean;
+  voice: string;
+  speed: number;
+  format: "mp3" | "wav";
+  instructions: string;
+  instructionField: "none" | "instructions" | "instruct";
+  timeout: number;
+  extra: Record<string, unknown>;
+};
+export type SpeechAudio = {
+  id: string;
+  script: string;
+  status:
+    "queued" | "preparing" | "generating" | "ready" | "error" | "interrupted";
+  error?: string;
+  segments: { text: string; url?: string; duration: number }[];
+};
+export type SpeechView = {
+  enabled: boolean;
+  audio?: SpeechAudio;
+  pending?: SpeechAudio;
+  jobId?: string;
 };
 export type AISettings = {
   enabledTools: string[];
@@ -111,6 +137,7 @@ export type AISettings = {
     timeout: number;
     maxCalls: number;
   };
+  tts: TTSConfig;
   prompts: Record<
     | "system"
     | "lesson"
@@ -118,7 +145,8 @@ export type AISettings = {
     | "word"
     | "image"
     | "assessment"
-    | "evaluation",
+    | "evaluation"
+    | "speech",
     string
   >;
 };
