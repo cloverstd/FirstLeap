@@ -399,7 +399,7 @@ test("lecture and reading shortcuts clamp, preserve pause and save positions", a
       mode === "lecture"
         ? [-30, -15, -10, -5, 5, 10, 15, 30]
         : [-10, -5, 5, 10];
-    await expect(page.locator(".seek-tools button")).toHaveCount(4);
+    await expect(page.locator(".seek-tools button")).toHaveCount(3);
     for (const offset of offsets) {
       await page.locator("video").evaluate((v: HTMLVideoElement) => {
         v.currentTime = 50;

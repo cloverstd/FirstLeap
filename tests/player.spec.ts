@@ -244,7 +244,7 @@ test("small screens and fullscreen retain every learning control", async ({
     const buttons = page
       .getByRole("group", { name: "快捷跳转" })
       .getByRole("button");
-    await expect(buttons).toHaveCount(4);
+    await expect(buttons).toHaveCount(3);
     const boxes = await buttons.evaluateAll((items) =>
       items.map((item) => {
         const r = item.getBoundingClientRect();

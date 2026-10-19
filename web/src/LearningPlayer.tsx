@@ -394,8 +394,10 @@ export function LearningPlayer(props: Props) {
     >
       <div
         className={cn(
-          "player-stage relative overflow-hidden rounded-t-2xl bg-[#101a14]",
+          "player-stage relative w-full overflow-hidden bg-[#101a14]",
+          replayBlocked ? "rounded-t-2xl" : "rounded-2xl",
           props.reading ? "aspect-[4/3]" : "aspect-video",
+          error && "min-h-80",
           fullscreen && "min-h-0 flex-1 rounded-none aspect-auto",
         )}
       >
@@ -421,7 +423,7 @@ export function LearningPlayer(props: Props) {
         )}
         {error && (
           <div
-            className="player-error absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-[#1b2c23] p-5 text-center"
+            className="player-error pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-[#1b2c23] p-5 text-center"
             role="alert"
           >
             <WifiOff className="size-7 text-white/60" />
@@ -431,7 +433,7 @@ export function LearningPlayer(props: Props) {
             </p>
             <Button
               variant="outline"
-              className="border-white/25 bg-white/5 text-white hover:bg-white/15 hover:text-white"
+              className="pointer-events-auto border-white/25 bg-white/5 text-white hover:bg-white/15 hover:text-white"
               onClick={() => {
                 setError(false);
                 player.current?.video.load();
@@ -445,11 +447,14 @@ export function LearningPlayer(props: Props) {
       </div>
       {controls &&
         createPortal(
-          <div className="media-controls flex w-full items-center gap-1 sm:gap-2">
+          <div className="media-controls flex w-full items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
-              className={cn(darkButton, "media-icon size-11 shrink-0")}
+              className={cn(
+                darkButton,
+                "media-play media-icon size-11 shrink-0",
+              )}
               aria-label={playing ? "暂停" : "播放"}
               onClick={togglePlay}
               disabled={error}
@@ -464,6 +469,180 @@ export function LearningPlayer(props: Props) {
               {clock(position)}
               <span className="text-white/60"> / {clock(duration)}</span>
             </span>
+            <div
+              className="seek-tools flex shrink-0 items-center"
+              role="group"
+              aria-label="快捷跳转"
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  darkButton,
+                  "media-icon relative size-11 shrink-0 active:scale-95",
+                )}
+                aria-label="快退 5 秒"
+                title="快退 5 秒"
+                disabled={!seekReady}
+                onClick={() => seek(-5)}
+              >
+                <RotateCcw className="size-6" />
+                <span className="absolute top-[15px] text-[9px] font-semibold">
+                  5
+                </span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  darkButton,
+                  "media-icon relative size-11 shrink-0 active:scale-95",
+                )}
+                aria-label="快进 5 秒"
+                title="快进 5 秒"
+                disabled={!seekReady}
+                onClick={() => seek(5)}
+              >
+                <RotateCw className="size-6" />
+                <span className="absolute top-[15px] text-[9px] font-semibold">
+                  5
+                </span>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(darkButton, "media-icon size-11 shrink-0")}
+                    aria-label="更多跳转"
+                    title="更多跳转"
+                    disabled={!seekReady}
+                  >
+                    <MoreHorizontal className="size-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  container={shell.current}
+                  onEscapeKeyDown={(event) => event.stopPropagation()}
+                  side="top"
+                  align="start"
+                  className="z-[10020] w-72 max-w-[calc(100vw-2rem)]"
+                  aria-label="更多跳转"
+                >
+                  <div className="grid grid-cols-2 gap-1">
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>快退</DropdownMenuLabel>
+                      {extraOffsets.map((offset) => (
+                        <DropdownMenuItem
+                          key={-offset}
+                          aria-label={`快退 ${offset} 秒`}
+                          className="min-h-11"
+                          onSelect={() => seek(-offset)}
+                        >
+                          <RotateCcw className="size-4" />
+                          快退 {offset} 秒
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuGroup>
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>快进</DropdownMenuLabel>
+                      {extraOffsets.map((offset) => (
+                        <DropdownMenuItem
+                          key={offset}
+                          aria-label={`快进 ${offset} 秒`}
+                          className="min-h-11"
+                          onSelect={() => seek(offset)}
+                        >
+                          <RotateCw className="size-4" />
+                          快进 {offset} 秒
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <div className="media-toggles flex shrink-0 items-center">
+              {props.reading && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    darkButton,
+                    "media-toggle min-w-11 shrink-0 px-2 text-xs",
+                    props.loopReading && "bg-white/10 text-[#bce6c5]",
+                  )}
+                  role="switch"
+                  aria-label="循环当前视频"
+                  title="循环当前视频"
+                  aria-checked={props.loopReading}
+                  onClick={() => props.onLoopChange(!props.loopReading)}
+                >
+                  <Repeat1 className="size-4" />
+                  <span className="media-toggle-label">循环当前视频</span>
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  darkButton,
+                  "media-toggle min-w-11 shrink-0 px-2 text-xs",
+                  props.continuous && "bg-white/10 text-[#bce6c5]",
+                )}
+                role="switch"
+                aria-label="连续播放"
+                title="连续播放"
+                aria-checked={props.continuous}
+                onClick={() => props.onContinuousChange(!props.continuous)}
+              >
+                <ListVideo className="size-4" />
+                <span className="media-toggle-label">连续播放</span>
+              </Button>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    darkButton,
+                    "media-speed shrink-0 gap-1 px-2 text-xs",
+                  )}
+                  aria-label="播放速度"
+                  title="播放速度"
+                >
+                  <Gauge className="size-4" />
+                  {rate}×<ChevronDown className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                container={shell.current}
+                onEscapeKeyDown={(event) => event.stopPropagation()}
+                side="top"
+                align="end"
+                className="z-[10020]"
+                aria-label="播放速度"
+              >
+                <DropdownMenuRadioGroup
+                  value={String(rate)}
+                  onValueChange={(value) => {
+                    const speed = Number(value);
+                    if (player.current) player.current.video.playbackRate = speed;
+                    setRate(speed);
+                  }}
+                >
+                  {speeds.map((speed) => (
+                    <DropdownMenuRadioItem
+                      className="min-h-11"
+                      key={speed}
+                      value={String(speed)}
+                    >
+                      {speed}×
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <div className="media-volume flex items-center">
               <Button
                 variant="ghost"
@@ -482,7 +661,7 @@ export function LearningPlayer(props: Props) {
                 )}
               </Button>
               <input
-                className="hidden h-11 w-16 cursor-pointer accent-[#a2d5ad] sm:block"
+                className="media-volume-slider h-11 w-16 cursor-pointer accent-[#a2d5ad]"
                 type="range"
                 aria-label="音量"
                 min="0"
@@ -500,7 +679,10 @@ export function LearningPlayer(props: Props) {
             <Button
               variant="ghost"
               size="icon"
-              className={cn(darkButton, "media-icon size-11")}
+              className={cn(
+                darkButton,
+                "media-fullscreen media-icon size-11 shrink-0",
+              )}
               aria-label={fullscreen ? "退出全屏" : "全屏"}
               onClick={() => void toggleFullscreen()}
             >
@@ -513,217 +695,27 @@ export function LearningPlayer(props: Props) {
           </div>,
           controls,
         )}
-      <div
-        className={cn(
-          "learning-dock flex flex-col gap-2 rounded-b-2xl border-t border-white/10 bg-[#20382b] px-3 py-3 sm:px-4",
-          fullscreen &&
-            "shrink-0 rounded-none lg:px-[max(16px,calc((100%-960px)/2))]",
-        )}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div
-            className="seek-tools flex items-center gap-1"
-            role="group"
-            aria-label="快捷跳转"
-          >
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                darkButton,
-                "relative size-12 rounded-full border border-white/10 bg-white/5 active:scale-95",
-              )}
-              aria-label="快退 5 秒"
-              disabled={!seekReady}
-              onClick={() => seek(-5)}
-            >
-              <RotateCcw className="size-7" />
-              <span className="absolute top-[17px] text-[9px] font-semibold">
-                5
-              </span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-12 rounded-full bg-[#a2d5ad] text-[#173324] hover:bg-[#b7e1bf] active:scale-95"
-              aria-label={playing ? "暂停视频" : "播放视频"}
-              disabled={error}
-              onClick={togglePlay}
-            >
-              {playing ? (
-                <Pause className="size-5 fill-current" />
-              ) : (
-                <Play className="ml-0.5 size-5 fill-current" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                darkButton,
-                "relative size-12 rounded-full border border-white/10 bg-white/5 active:scale-95",
-              )}
-              aria-label="快进 5 秒"
-              disabled={!seekReady}
-              onClick={() => seek(5)}
-            >
-              <RotateCw className="size-7" />
-              <span className="absolute top-[17px] text-[9px] font-semibold">
-                5
-              </span>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(darkButton, "size-11 rounded-full")}
-                  aria-label="更多跳转"
-                  disabled={!seekReady}
-                >
-                  <MoreHorizontal className="size-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                container={shell.current}
-                onEscapeKeyDown={(event) => event.stopPropagation()}
-                side="top"
-                align="start"
-                className="z-[10020] w-72 max-w-[calc(100vw-2rem)]"
-                aria-label="更多跳转"
-              >
-                <div className="grid grid-cols-2 gap-1">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>快退</DropdownMenuLabel>
-                    {extraOffsets.map((offset) => (
-                      <DropdownMenuItem
-                        key={-offset}
-                        aria-label={`快退 ${offset} 秒`}
-                        className="min-h-11"
-                        onSelect={() => seek(-offset)}
-                      >
-                        <RotateCcw className="size-4" />
-                        快退 {offset} 秒
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuGroup>
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>快进</DropdownMenuLabel>
-                    {extraOffsets.map((offset) => (
-                      <DropdownMenuItem
-                        key={offset}
-                        aria-label={`快进 ${offset} 秒`}
-                        className="min-h-11"
-                        onSelect={() => seek(offset)}
-                      >
-                        <RotateCw className="size-4" />
-                        快进 {offset} 秒
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuGroup>
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                className={cn(darkButton, "gap-1 px-2 text-xs")}
-                aria-label="播放速度"
-              >
-                <Gauge className="size-4" />
-                {rate}×<ChevronDown className="size-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              container={shell.current}
-              onEscapeKeyDown={(event) => event.stopPropagation()}
-              side="top"
-              align="end"
-              className="z-[10020]"
-              aria-label="播放速度"
-            >
-              <DropdownMenuRadioGroup
-                value={String(rate)}
-                onValueChange={(value) => {
-                  const speed = Number(value);
-                  if (player.current) player.current.video.playbackRate = speed;
-                  setRate(speed);
-                }}
-              >
-                {speeds.map((speed) => (
-                  <DropdownMenuRadioItem
-                    className="min-h-11"
-                    key={speed}
-                    value={String(speed)}
-                  >
-                    {speed}×
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <div className="dock-toggles flex flex-wrap items-center gap-1 border-t border-white/10 pt-2">
-          {props.reading && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                darkButton,
-                "px-2 text-xs",
-                props.loopReading && "bg-white/10 text-[#bce6c5]",
-              )}
-              role="switch"
-              aria-checked={props.loopReading}
-              onClick={() => props.onLoopChange(!props.loopReading)}
-            >
-              <Repeat1 className="size-4" />
-              循环当前视频
-            </Button>
-          )}
+      {replayBlocked && (
+        <div
+          className="player-notice flex flex-wrap items-center justify-between gap-2 rounded-b-2xl border-t border-white/10 bg-[#20382b] px-3 py-2 text-xs text-[#bce6c5]"
+          role="status"
+        >
+          <span>
+            {props.reading && props.loopReading
+              ? "已回到开头，点击播放即可继续循环。"
+              : "点击播放即可继续观看。"}
+          </span>
           <Button
             variant="ghost"
             size="sm"
-            className={cn(
-              darkButton,
-              "px-2 text-xs",
-              props.continuous && "bg-white/10 text-[#bce6c5]",
-            )}
-            role="switch"
-            aria-checked={props.continuous}
-            onClick={() => props.onContinuousChange(!props.continuous)}
+            className={darkButton}
+            onClick={play}
           >
-            <ListVideo className="size-4" />
-            连续播放
+            <Play className="mr-1 size-3.5" />
+            播放
           </Button>
-          <span className="ml-auto hidden text-[10px] tracking-widest text-white/40 sm:block">
-            {props.reading ? "LISTEN & REPEAT" : "LEARN AT YOUR PACE"}
-          </span>
         </div>
-        {replayBlocked && (
-          <div
-            className="player-notice flex flex-wrap items-center justify-between gap-2 text-xs text-[#bce6c5]"
-            role="status"
-          >
-            <span>
-              {props.reading && props.loopReading
-                ? "已回到开头，点击播放即可继续循环。"
-                : "点击播放即可继续观看。"}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={darkButton}
-              onClick={play}
-            >
-              <Play className="mr-1 size-3.5" />
-              播放
-            </Button>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
