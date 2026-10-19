@@ -49,7 +49,35 @@ export type Explanation = {
   model: string;
   createdAt: string;
   usage: Record<string, unknown>[];
+  toolsUsed?: string[] | null;
 };
+export type AIToolInfo = {
+  id: string;
+  label: string;
+  description: string;
+  workflows: string[];
+  requiredFor: string[];
+};
+export const AI_WORKFLOWS: Record<string, string> = {
+  explanation: "课文详解",
+  assessment: "动态测评出题",
+  evaluation: "能力评估",
+};
+export function explanationBasis(result: Explanation) {
+  const legacy = result.toolsUsed == null;
+  const hasProfile =
+    legacy || result.toolsUsed!.includes("get_learner_profile");
+  const hasState =
+    legacy || result.toolsUsed!.includes("get_current_learning_state");
+  return [
+    hasProfile
+      ? `按${levelName(result.context.profile.level)}水平`
+      : "未读取学习档案",
+    hasState ? result.context.stage : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 export type JobState = {
   id: string;
   status: "running" | "done" | "error";
@@ -67,6 +95,7 @@ export type ModelConfig = {
   model: string;
 };
 export type AISettings = {
+  enabledTools: string[];
   text: ModelConfig & {
     protocol: "chat" | "responses";
     stream: boolean;

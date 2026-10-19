@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   api,
-  levelName,
+  explanationBasis,
   useJob,
   type AITarget,
   type AIImage,
@@ -208,11 +208,12 @@ function ExplanationPanel({
       </p>
       {result && (
         <div className="ai-context">
-          按{levelName(result.context.profile.level)}水平 ·{" "}
-          {result.context.stage}生成
-          {result.context.profile.weaknesses.length > 0 && (
-            <span>关注：{result.context.profile.weaknesses.join("、")}</span>
-          )}
+          {explanationBasis(result)}生成
+          {(result.toolsUsed == null ||
+            result.toolsUsed.includes("get_learner_profile")) &&
+            result.context.profile.weaknesses.length > 0 && (
+              <span>关注：{result.context.profile.weaknesses.join("、")}</span>
+            )}
           <small>
             {new Date(result.createdAt).toLocaleString()} · {result.model}
           </small>
@@ -353,7 +354,7 @@ function ExplanationPanel({
                 setJobId("");
               }}
             >
-              {levelName(old.context.profile.level)} · {old.context.stage} ·{" "}
+              {explanationBasis(old)} ·{" "}
               {new Date(old.createdAt).toLocaleDateString()}
             </Button>
           ))}

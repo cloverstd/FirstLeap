@@ -145,16 +145,19 @@ func TestAIExplanationCachePersonalizationAndFailures(t *testing.T) {
 	var calls atomic.Int32
 	var fail atomic.Bool
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		if !fail.Load() && mockRequiredAIToolRead(w, input) {
+			return
+		}
 		calls.Add(1)
 		if fail.Load() {
 			http.Error(w, "text-secret upstream credentials", 401)
 			return
 		}
-		var input map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&input)
 		encoded, _ := json.Marshal(input)
-		if !strings.Contains(string(encoded), "learningContext") || !strings.Contains(string(encoded), "handbag") {
-			t.Error("missing learner context or original text")
+		if strings.Contains(string(encoded), "learningContext") || !strings.Contains(string(encoded), "handbag") {
+			t.Error("context was injected or lesson tool result missing")
 		}
 		chatJSON(w, "# 详解\n这是个性化解释。")
 	}))
@@ -229,7 +232,7 @@ func TestAIConcurrentGenerationAndSnapshotStream(t *testing.T) {
 	}))
 	defer provider.Close()
 	setProvider(a, provider.URL, "chat", false)
-	req := explainRequest{Book: 1, Lesson: 1, Target: aiTarget{Kind: "lesson"}}
+	req := explainRequest{Book: 1, Lesson: 1, Target: aiTarget{Kind: "sentence", ID: "s1"}}
 	id1 := jobFromResponse(t, aiRequest(t, a, "POST", "/api/ai/explanations", req))
 	<-started
 	id2 := jobFromResponse(t, aiRequest(t, a, "POST", "/api/ai/explanations", req))
@@ -330,7 +333,7 @@ func TestAIProtocolsStreamingAndImageTools(t *testing.T) {
 				a.ai.settings.Image.Enabled = true
 				a.ai.settings.Image.modelConfig = modelConfig{BaseURL: provider.URL, APIKey: "image-secret", Model: "image-model"}
 				a.ai.mu.Unlock()
-				state := waitAIJob(t, a, jobFromResponse(t, aiRequest(t, a, "POST", "/api/ai/explanations", explainRequest{Book: 1, Lesson: 1, Target: aiTarget{Kind: "lesson"}})))
+				state := waitAIJob(t, a, jobFromResponse(t, aiRequest(t, a, "POST", "/api/ai/explanations", explainRequest{Book: 1, Lesson: 1, Target: aiTarget{Kind: "sentence", ID: "s1"}})))
 				if state.Status != "done" {
 					t.Fatal(state.Error)
 				}
@@ -382,18 +385,19 @@ func TestAdaptiveAssessmentHidesAnswerResumesAndHonorsLocks(t *testing.T) {
 	var calls atomic.Int32
 	var sawUnknownInQuestion, sawUnknownInEvaluation atomic.Bool
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		var input struct {
-			Messages []struct {
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
+		var input map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&input)
+		if mockRequiredAIToolRead(w, input) {
+			return
+		}
+		calls.Add(1)
+		messages := input["messages"].([]any)
+		last := messages[len(messages)-1].(map[string]any)["content"].(string)
 		var payload struct {
 			PriorAnswers []assessmentAnswer `json:"priorAnswers"`
 			Evidence     []assessmentAnswer `json:"evidence"`
 		}
-		_ = json.Unmarshal([]byte(input.Messages[len(input.Messages)-1].Content), &payload)
+		_ = json.Unmarshal([]byte(last), &payload)
 		for _, answer := range payload.PriorAnswers {
 			if answer.Unknown && answer.Choice == -2 && !answer.Correct && !answer.Skipped {
 				sawUnknownInQuestion.Store(true)
@@ -546,6 +550,11 @@ func TestFeedbackAutomaticallyUpdatesOnlyEvidencedAbilitiesAndCanUndo(t *testing
 	a := aiFixture(t)
 	var calls atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		if mockRequiredAIToolRead(w, input) {
+			return
+		}
 		calls.Add(1)
 		chatJSON(w, `{"level":4,"abilities":{"vocabulary":4,"grammar":4,"reading":4,"listening":4},"weaknesses":["定语从句"],"reason":"三次语法困难反馈，增加语法支持"}`)
 	}))
@@ -643,8 +652,10 @@ func TestImageToolBudgetIsEnforcedOnMultipleCalls(t *testing.T) {
 			}
 			jsonResponse(w, 200, map[string]any{"choices": []any{map[string]any{"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "content": "", "tool_calls": list}}}})
 		} else {
-			if _, ok := body["tools"]; ok {
-				t.Error("tools still enabled after image budget reached")
+			for _, tool := range body["tools"].([]any) {
+				if tool.(map[string]any)["function"].(map[string]any)["name"] == "generate_image" {
+					t.Error("image tool still enabled after its budget was reached")
+				}
 			}
 			chatJSON(w, "完成文字解释")
 		}
@@ -656,7 +667,7 @@ func TestImageToolBudgetIsEnforcedOnMultipleCalls(t *testing.T) {
 	a.ai.settings.Image.MaxCalls = 1
 	a.ai.settings.Image.modelConfig = modelConfig{BaseURL: provider.URL, Model: "image"}
 	a.ai.mu.Unlock()
-	state := waitAIJob(t, a, jobFromResponse(t, aiRequest(t, a, "POST", "/api/ai/explanations", explainRequest{Book: 1, Lesson: 1, Target: aiTarget{Kind: "lesson"}})))
+	state := waitAIJob(t, a, jobFromResponse(t, aiRequest(t, a, "POST", "/api/ai/explanations", explainRequest{Book: 1, Lesson: 1, Target: aiTarget{Kind: "sentence", ID: "s1"}})))
 	if state.Status != "done" || images.Load() != 1 || calls.Load() != 2 {
 		t.Fatalf("tool budget failed: %s %d images %d text", state.Error, images.Load(), calls.Load())
 	}

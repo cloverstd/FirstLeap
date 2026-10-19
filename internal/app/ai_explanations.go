@@ -57,6 +57,7 @@ type explanation struct {
 	CreatedAt string           `json:"createdAt"`
 	Model     string           `json:"model"`
 	Usage     []map[string]any `json:"usage"`
+	ToolsUsed []string         `json:"toolsUsed"`
 }
 type jobSnapshot struct {
 	ID       string    `json:"id"`
@@ -194,10 +195,13 @@ func semanticProfile(p profileData) any {
 	}
 	return map[string]any{"level": p.Level, "abilities": levels, "goals": p.Goals, "weaknesses": p.Weaknesses, "style": p.Style}
 }
-func (s *aiService) explainContext(req explainRequest, l TextLesson) (learningContext, string) {
+func (s *aiService) progressSnapshot() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ctx := learningContext{Profile: copyValue(s.state.Profile.profileData), Progress: map[string]any{}, Current: map[string]any{"book": l.Book, "lesson": l.Lesson, "title": l.TitleEn}, Stage: "初学"}
+	return s.learningProgressLocked()
+}
+func (s *aiService) learningProgressLocked() map[string]any {
+	progress := map[string]any{}
 	refs := map[string]any{}
 	s.app.mu.RLock()
 	for id, e := range s.app.entries {
@@ -237,8 +241,14 @@ func (s *aiService) explainContext(req explainRequest, l TextLesson) (learningCo
 			completed = append(completed, describe(track, id))
 		}
 		last, _ := rows["@last"].Values["lastLesson"].(string)
-		ctx.Progress[track] = map[string]any{"completed": completed, "completedCount": len(ids), "lastLesson": describe(track, last)}
+		progress[track] = map[string]any{"completed": completed, "completedCount": len(ids), "lastLesson": describe(track, last)}
 	}
+	return progress
+}
+func (s *aiService) explainContext(req explainRequest, l TextLesson, cfg aiSettings) (learningContext, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx := learningContext{Profile: copyValue(s.state.Profile.profileData), Progress: s.learningProgressLocked(), Current: map[string]any{"book": l.Book, "lesson": l.Lesson, "title": l.TitleEn}, Stage: "初学"}
 	textKey := fmt.Sprintf("%d:%d", l.Book, l.Lesson)
 	text := s.state.Progress.Tracks["text"][textKey]
 	if text.Values["completed"] == true {
@@ -277,7 +287,7 @@ func (s *aiService) explainContext(req explainRequest, l TextLesson) (learningCo
 		}
 	}
 	_, selectedText, _ := resolveTarget(l, req.Target)
-	key := contentHash([]any{"explanation-v1", l.Book, l.Lesson, req.Target, selectedText, lessonEnglish(l), semanticProfile(ctx.Profile), ctx.Stage})
+	key := contentHash([]any{"explanation-tools-v2", normalizedAITools(cfg.EnabledTools), l.Book, l.Lesson, req.Target, selectedText, lessonEnglish(l), semanticProfile(ctx.Profile), ctx.Stage})
 	return ctx, key
 }
 func (s *aiService) explanationPath(id string) string {
@@ -299,7 +309,7 @@ func (s *aiService) explanationRoutes(mux *http.ServeMux) {
 			failure(w, 400, err.Error())
 			return
 		}
-		_, key := s.explainContext(req, l)
+		_, key := s.explainContext(req, l, s.settingsSnapshot())
 		var cached explanation
 		hit := s.readExplanation(s.explanationPath(key), &cached) == nil
 		s.mu.Lock()
@@ -331,7 +341,8 @@ func (s *aiService) explanationRoutes(mux *http.ServeMux) {
 			return
 		}
 		req.Target = target
-		ctx, key := s.explainContext(req, l)
+		cfg := s.settingsSnapshot()
+		ctx, key := s.explainContext(req, l, cfg)
 		if !req.Regenerate {
 			var cached explanation
 			if s.readExplanation(s.explanationPath(key), &cached) == nil {
@@ -339,7 +350,6 @@ func (s *aiService) explanationRoutes(mux *http.ServeMux) {
 				return
 			}
 		}
-		cfg := s.settingsSnapshot()
 		if !configured(cfg.Text.modelConfig) {
 			failure(w, 409, "请先在系统配置中设置文字模型")
 			return
@@ -449,75 +459,66 @@ func (s *aiService) generateExplanation(ctx context.Context, j *aiJob, cfg aiSet
 	if req.Target.Kind == "word" || req.Target.Kind == "vocabulary" {
 		prompt = cfg.Prompts.Word
 	}
-	data, _ := json.Marshal(map[string]any{"learningContext": lc, "passage": lessonEnglish(l), "target": targetText, "instruction": prompt})
-	var tools []map[string]any
-	if cfg.Image.Enabled && cfg.Image.MaxCalls > 0 && configured(cfg.Image.modelConfig) {
-		tools = []map[string]any{imageTool(cfg.Text.Protocol)}
+	// Only the selected task is sent initially. A whole-lesson target carries no
+	// passage; its content must be obtained with get_current_lesson.
+	task := map[string]any{"kind": req.Target.Kind}
+	if req.Target.Kind != "lesson" {
+		task["text"] = targetText
 	}
-	p := newProviderSession(cfg.Text, cfg.Prompts.System+"\n学习等级：-1未评估，0入门，1初级，2中级，3中高级，4高级。你可以在视觉解释有帮助时调用生图工具。只引用工具实际返回的本站图片 URL，不要编造图片。", string(data), tools)
-	result := explanation{ID: key, Book: l.Book, Lesson: l.Lesson, Target: req.Target, Images: []aiImage{}, Warnings: []string{}, Context: lc, CreatedAt: nowISO(), Model: cfg.Text.Model, Usage: []map[string]any{}}
-	calls := 0
-	for round := 0; round < cfg.Image.MaxCalls+2; round++ {
-		if result.Content != "" {
-			result.Content += "\n\n"
-			j.update(func(v *jobSnapshot) { v.Text += "\n\n" })
-		}
-		t, err := s.turn(ctx, p, func(delta string) { j.update(func(v *jobSnapshot) { v.Text += delta }) })
+	data, _ := json.Marshal(map[string]any{"book": l.Book, "lesson": l.Lesson, "target": task, "instruction": prompt})
+	result := explanation{ID: key, Book: l.Book, Lesson: l.Lesson, Target: req.Target, Images: []aiImage{}, Warnings: []string{}, Context: lc, CreatedAt: nowISO(), Model: cfg.Text.Model, Usage: []map[string]any{}, ToolsUsed: []string{}}
+	rt := &aiToolRuntime{Config: cfg, Workflow: "explanation", Used: []string{}, Values: map[string]any{
+		"get_learner_profile":        lc.Profile,
+		"get_learning_progress":      lc.Progress,
+		"get_current_learning_state": map[string]any{"current": lc.Current, "stage": lc.Stage},
+		"get_current_lesson":         map[string]any{"book": l.Book, "lesson": l.Lesson, "title": l.TitleEn, "passage": lessonEnglish(l)},
+	}}
+	if req.Target.Kind == "lesson" {
+		rt.Required = []string{"get_current_lesson"}
+	}
+	rt.Image = func(args imageToolArgs) (any, error) {
+		id := contentHash([]any{"image-v1", l.Book, l.Lesson, lessonEnglish(l), args.Prompt})
+		im := aiImage{ID: id, Prompt: args.Prompt, Caption: args.Caption, URL: "/api/ai/images/" + id}
+		j.update(func(v *jobSnapshot) { v.Warnings = append(v.Warnings, "正在生成配图："+args.Caption) })
+		generated, err := s.makeImage(ctx, cfg, im, false)
+		var output any
 		if err != nil {
-			return nil, err
+			warning := "配图失败：" + err.Error()
+			result.Warnings = append(result.Warnings, warning)
+			result.Images = append(result.Images, im)
+			output = map[string]string{"error": warning, "imageId": im.ID}
+		} else {
+			result.Images = append(result.Images, generated)
+			output = map[string]string{"imageId": generated.ID, "url": generated.URL, "caption": generated.Caption}
 		}
-		result.Content += t.Text
-		if t.Usage != nil {
-			result.Usage = append(result.Usage, t.Usage)
+		j.update(func(v *jobSnapshot) { v.Images = copyValue(result.Images); v.Warnings = copyValue(result.Warnings) })
+		return output, err
+	}
+	p := newProviderSession(cfg.Text, cfg.Prompts.System+rt.instructions(), string(data), nil)
+	turns, err := s.runToolSession(ctx, p, rt, func(delta string) { j.update(func(v *jobSnapshot) { v.Text += delta }) })
+	if err != nil {
+		return nil, err
+	}
+	parts := []string{}
+	for _, turn := range turns {
+		if turn.Text != "" {
+			parts = append(parts, turn.Text)
 		}
-		if len(t.Calls) == 0 {
-			if strings.TrimSpace(result.Content) == "" {
-				return nil, fmt.Errorf("AI 没有返回详解")
-			}
-			if err = writeJSONAtomic(s.explanationPath(key), result); err != nil {
-				return nil, fmt.Errorf("详解缓存保存失败")
-			}
-			return result, nil
-		}
-		p.addTurn(t)
-		for _, call := range t.Calls {
-			calls++
-			var args struct {
-				Prompt  string `json:"prompt"`
-				Caption string `json:"caption"`
-			}
-			decoder := json.NewDecoder(strings.NewReader(call.Arguments))
-			decoder.DisallowUnknownFields()
-			var toolResult any
-			if call.Name != "generate_image" || calls > cfg.Image.MaxCalls || !cfg.Image.Enabled || !configured(cfg.Image.modelConfig) {
-				toolResult = map[string]string{"error": "当前工具不可用或已达到配图上限，请继续完成文字详解"}
-			} else if decoder.Decode(&args) != nil || decoder.Decode(&struct{}{}) != io.EOF || strings.TrimSpace(args.Caption) == "" || strings.TrimSpace(args.Prompt) == "" || len(args.Prompt) > 8000 || len(args.Caption) > 500 {
-				toolResult = map[string]string{"error": "配图参数无效，请继续文字详解"}
-			} else {
-				id := contentHash([]any{"image-v1", l.Book, l.Lesson, lessonEnglish(l), args.Prompt})
-				im := aiImage{ID: id, Prompt: args.Prompt, Caption: args.Caption, URL: "/api/ai/images/" + id}
-				j.update(func(v *jobSnapshot) { v.Warnings = append(v.Warnings, "正在生成配图："+args.Caption) })
-				generated, e := s.makeImage(ctx, cfg, im, false)
-				if e != nil {
-					warning := "配图失败：" + e.Error()
-					result.Warnings = append(result.Warnings, warning)
-					result.Images = append(result.Images, im)
-					toolResult = map[string]string{"error": warning, "imageId": im.ID}
-				} else {
-					result.Images = append(result.Images, generated)
-					toolResult = map[string]string{"imageId": generated.ID, "url": generated.URL, "caption": generated.Caption}
-				}
-				j.update(func(v *jobSnapshot) { v.Images = copyValue(result.Images); v.Warnings = copyValue(result.Warnings) })
-			}
-			p.toolResult(call, toolResult)
-		}
-		if calls >= cfg.Image.MaxCalls {
-			p.Tools = nil
-			p.Messages = append(p.Messages, map[string]any{"role": "user", "content": "配图工具调用阶段已结束，请直接完成文字详解，不再请求工具。"})
+		if turn.Usage != nil {
+			result.Usage = append(result.Usage, turn.Usage)
 		}
 	}
-	return nil, fmt.Errorf("工具调用轮次过多，已停止生成。请调整提示词后重试")
+	result.Content = strings.Join(parts, "\n\n")
+	result.ToolsUsed = rt.Used
+	if strings.TrimSpace(turns[len(turns)-1].Text) == "" {
+		return nil, fmt.Errorf("AI 没有返回详解")
+	}
+	if err = writeJSONAtomic(s.explanationPath(key), result); err != nil {
+		return nil, fmt.Errorf("详解缓存保存失败")
+	}
+	return result, nil
 }
+
 func (s *aiService) makeImage(ctx context.Context, cfg aiSettings, im aiImage, force bool) (aiImage, error) {
 	s.imageMu.Lock()
 	defer s.imageMu.Unlock()

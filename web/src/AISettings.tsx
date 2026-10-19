@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import {
   api,
   useAPI,
+  AI_WORKFLOWS,
+  type AIToolInfo,
   type AISettings as SettingsData,
   type ModelConfig,
 } from "./ai";
@@ -219,9 +221,11 @@ export function Field({
 function SettingsForm({
   initial,
   defaults,
+  tools,
 }: {
   initial: SettingsData;
   defaults: SettingsData;
+  tools: AIToolInfo[];
 }) {
   const [form, setForm] = useState(initial),
     [status, setStatus] = useState(""),
@@ -399,9 +403,75 @@ function SettingsForm({
           </details>
         </section>
       ))}
+      <section className="ai-card" aria-label="AI 工具配置">
+        <h2>AI 工具</h2>
+        <p>
+          勾选允许 AI
+          按需调用的工具，默认全部启用。每次请求只提供当前流程适用的工具，档案、进度和教学材料通过工具读取。
+        </p>
+        <div className="ai-provider-actions">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() =>
+              setForm((f) => ({
+                ...f,
+                enabledTools: tools.map((tool) => tool.id),
+              }))
+            }
+          >
+            全选工具
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => setForm((f) => ({ ...f, enabledTools: [] }))}
+          >
+            取消全选工具
+          </Button>
+        </div>
+        <div className="ai-tool-list">
+          {tools.map((tool) => (
+            <div className="ai-tool-item" key={tool.id}>
+              <label className="ai-check">
+                <input
+                  type="checkbox"
+                  checked={form.enabledTools.includes(tool.id)}
+                  disabled={busy}
+                  aria-label={`启用${tool.label}工具`}
+                  onChange={(event) =>
+                    setForm((f) => ({
+                      ...f,
+                      enabledTools: event.target.checked
+                        ? [...f.enabledTools, tool.id]
+                        : f.enabledTools.filter((id) => id !== tool.id),
+                    }))
+                  }
+                />
+                <strong>{tool.label}</strong>
+              </label>
+              <code>{tool.id}</code>
+              <p>{tool.description}</p>
+              <small>
+                适用于：
+                {tool.workflows
+                  .map((workflow) => AI_WORKFLOWS[workflow] || workflow)
+                  .join("、")}
+                {tool.requiredFor.length > 0 &&
+                  `；${tool.requiredFor.join("、")}必需`}
+              </small>
+            </div>
+          ))}
+        </div>
+        <p className="ai-subtle">
+          关闭必要工具会暂停对应生成操作，重新启用后可继续。已有答案、反馈和历史结果仍会保留。
+        </p>
+      </section>
       <section className="ai-card">
         <h2>系统提示词</h2>
-        <p>学习档案与最新进度会在生成时自动提供给 AI。</p>
+        <p>AI 按需通过已启用的工具读取材料，再依据实际获得的信息生成内容。</p>
         {(
           Object.entries({
             system: "通用系统提示词",
@@ -455,22 +525,25 @@ function SettingsForm({
   );
 }
 export function AISettings() {
-  const resource = useAPI<{ settings: SettingsData; defaults: SettingsData }>(
-    "/api/settings/ai",
-  );
+  const resource = useAPI<{
+    settings: SettingsData;
+    defaults: SettingsData;
+    tools: AIToolInfo[];
+  }>("/api/settings/ai");
   return (
     <main className="ai-page">
       <header className="ai-page-heading">
         <Settings size={24} />
         <div>
           <h1>系统配置</h1>
-          <p>配置文字、生图模型与教学提示词。</p>
+          <p>配置文字、生图模型、AI 工具与教学提示词。</p>
         </div>
       </header>
       {resource.value ? (
         <SettingsForm
           initial={resource.value.settings}
           defaults={resource.value.defaults}
+          tools={resource.value.tools}
         />
       ) : (
         <div className="ai-card" role="status">

@@ -352,15 +352,15 @@ func (s *aiService) modelRequest(ctx context.Context, c modelConfig, path string
 	}
 	return resp, nil
 }
-func (s *aiService) structured(ctx context.Context, c aiSettings, instruction string, input any, out any) error {
+func (s *aiService) structured(ctx context.Context, c aiSettings, instruction string, input any, rt *aiToolRuntime, out any) error {
 	data, _ := json.Marshal(input)
-	p := newProviderSession(c.Text, c.Prompts.System+"\n"+instruction+"\n只返回指定结构的 JSON 对象，不要 Markdown 或额外说明。", string(data), nil)
+	p := newProviderSession(c.Text, c.Prompts.System+"\n"+instruction+rt.instructions()+"\n工具读取完成后，最终回答只返回指定结构的 JSON 对象，不要 Markdown 或额外说明。", string(data), nil)
 	p.Config.Stream = false
-	t, err := s.turn(ctx, p, nil)
+	turns, err := s.runToolSession(ctx, p, rt, nil)
 	if err != nil {
 		return err
 	}
-	raw := strings.TrimSpace(t.Text)
+	raw := strings.TrimSpace(turns[len(turns)-1].Text)
 	if strings.HasPrefix(raw, "```") {
 		if i := strings.Index(raw, "\n"); i >= 0 {
 			raw = raw[i+1:]

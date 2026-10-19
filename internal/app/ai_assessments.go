@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 )
 
@@ -281,7 +282,10 @@ func (s *aiService) startFeedbackEvaluation(count int) string {
 			if len(excerpt) > 800 {
 				excerpt = excerpt[:800]
 			}
-			example := map[string]any{"id": feedback.ExplanationID, "book": exp.Book, "lesson": exp.Lesson, "target": exp.Target, "level": exp.Context.Profile.Level, "explanationExcerpt": string(excerpt)}
+			example := map[string]any{"id": feedback.ExplanationID, "book": exp.Book, "lesson": exp.Lesson, "target": exp.Target, "explanationExcerpt": string(excerpt)}
+			if exp.ToolsUsed == nil || slices.Contains(exp.ToolsUsed, "get_learner_profile") {
+				example["level"] = exp.Context.Profile.Level
+			}
 			if lesson, err := s.app.textLesson(exp.Book, exp.Lesson); err == nil {
 				_, text, err := resolveTarget(lesson, exp.Target)
 				if err == nil {
@@ -321,7 +325,10 @@ func (s *aiService) evaluateProfile(ctx context.Context, cfg aiSettings, base pr
 		Reason     string         `json:"reason"`
 	}
 	schema := `返回 {"level":-1到4整数,"abilities":{"vocabulary":-1到4整数,"grammar":-1到4整数,"reading":-1到4整数,"listening":-1到4整数},"weaknesses":["有证据支持的薄弱项"],"reason":"解释判断依据"}。-1未评估，0入门，1初级，2中级，3中高级，4高级。不要评估口语或写作。答题记录中 unknown=true、choice=-2 表示学习者明确选择“不知道”，是尚未掌握的有效答题证据。skipped=true 表示因题目或音频不可用而跳过，不作为答错证据。`
-	if err := s.structured(ctx, cfg, cfg.Prompts.Evaluation+"\n"+schema, map[string]any{"profile": base, "evidence": evidence, "feedbackOnly": feedback}, &output); err != nil {
+	values := s.commonToolValues(base)
+	values["get_evaluation_evidence"] = map[string]any{"evidence": evidence, "feedbackOnly": feedback}
+	rt := &aiToolRuntime{Config: cfg, Workflow: "evaluation", Values: values, Required: []string{"get_evaluation_evidence"}}
+	if err := s.structured(ctx, cfg, cfg.Prompts.Evaluation+"\n"+schema, map[string]any{"task": "evaluation", "feedbackOnly": feedback}, rt, &output); err != nil {
 		return base, "", err
 	}
 	if output.Level == nil || *output.Level < -1 || *output.Level > 4 || len(output.Weaknesses) > 30 || output.Reason == "" || len(output.Reason) > 4000 {
@@ -442,7 +449,7 @@ func (s *aiService) advanceAssessment(id string) string {
 			q.Text = "当前没有可用原音，听力部分暂未测评。可以稍后重新测评。"
 			q.Unavailable = true
 		} else {
-			schema := `返回 {"text":"中文题干，阅读题附英文材料，听力题不泄露原音文字","options":["选项A","选项B","选项C","选项D"],"answer":0到3正确选项下标,"explanation":"中文答案解析","difficulty":0到4整数,"audioIndex":听力所选原音下标，其他为-1}。不要调用任何工具。应用会额外提供“不知道”选项，不要将它加入 options。priorAnswers 中 unknown=true、choice=-2 表示学习者明确选择“不知道”，请作为尚未掌握的证据调整难度；skipped=true 是因题目或音频不可用而跳过，不作为答错证据。`
+			schema := `返回 {"text":"中文题干，阅读题附英文材料，听力题不泄露原音文字","options":["选项A","选项B","选项C","选项D"],"answer":0到3正确选项下标,"explanation":"中文答案解析","difficulty":0到4整数,"audioIndex":听力所选原音下标，其他为-1}。先通过工具读取测评上下文，再返回题目。应用会额外提供“不知道”选项，不要将它加入 options。priorAnswers 中 unknown=true、choice=-2 表示学习者明确选择“不知道”，请作为尚未掌握的证据调整难度；skipped=true 是因题目或音频不可用而跳过，不作为答错证据。`
 			var generated struct {
 				Text        string   `json:"text"`
 				Options     []string `json:"options"`
@@ -451,7 +458,10 @@ func (s *aiService) advanceAssessment(id string) string {
 				Difficulty  *int     `json:"difficulty"`
 				AudioIndex  *int     `json:"audioIndex"`
 			}
-			if err := s.structured(ctx, cfg, cfg.Prompts.Assessment+"\n"+schema, map[string]any{"dimension": dim, "profile": base.profileData, "priorAnswers": session.Answers, "audioCandidates": audio}, &generated); err != nil {
+			values := s.commonToolValues(base.profileData)
+			values["get_assessment_context"] = map[string]any{"dimension": dim, "priorAnswers": session.Answers, "audioCandidates": audio}
+			rt := &aiToolRuntime{Config: cfg, Workflow: "assessment", Values: values, Required: []string{"get_assessment_context"}}
+			if err := s.structured(ctx, cfg, cfg.Prompts.Assessment+"\n"+schema, map[string]any{"task": "assessment", "dimension": dim}, rt, &generated); err != nil {
 				return nil, err
 			}
 			if len(generated.Options) != 4 || generated.Answer == nil || *generated.Answer < 0 || *generated.Answer > 3 || generated.Difficulty == nil || *generated.Difficulty < 0 || *generated.Difficulty > 4 || generated.Text == "" || len(generated.Text) > 12000 || generated.Explanation == "" {

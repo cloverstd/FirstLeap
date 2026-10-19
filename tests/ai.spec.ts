@@ -22,6 +22,7 @@ let binaryRoot: string,
   provider: Server,
   origin: string,
   providerURL: string;
+let modelRequests: Record<string, unknown>[] = [];
 let counters = {
     explanations: 0,
     images: 0,
@@ -64,6 +65,7 @@ test.beforeEach(async ({ request }) => {
   failModels = false;
   modelDelay = 0;
   modelIDs = ["teaching", "illustration", "new-provider-model"];
+  modelRequests = [];
   provider = createServer(async (req, res) => {
     if (req.url === "/v1/models" && req.method === "GET") {
       counters.models++;
@@ -86,6 +88,7 @@ test.beforeEach(async ({ request }) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+    modelRequests.push(input);
     res.setHeader("Content-Type", "application/json");
     if (req.url === "/v1/images/generations") {
       counters.images++;
@@ -127,8 +130,84 @@ test.beforeEach(async ({ request }) => {
               },
         ),
       );
-    if (payload.dimension) {
+    const toolOutputs = messages.filter(
+      (m: { role?: string; type?: string }) =>
+        m.role === "tool" || m.type === "function_call_output",
+    );
+    const isAssessment = payload.task === "assessment";
+    const isEvaluation = payload.task === "evaluation";
+    if (!isAssessment && !isEvaluation) {
+      counters.explanations++;
+      if (failText) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "private-key-never-expose" }));
+        return;
+      }
+    }
+    const definitions = (input.tools || []).map(
+      (tool: { name?: string; function?: { name?: string } }) =>
+        tool.name || tool.function?.name,
+    );
+    if (definitions.length && !toolOutputs.length) {
+      const calls = definitions.map((name: string) => ({
+        id: name,
+        type: "function",
+        function: {
+          name,
+          arguments: JSON.stringify(
+            name === "generate_image"
+              ? {
+                  prompt: "a handbag on a desk",
+                  caption: "课文里的手提包",
+                }
+              : {},
+          ),
+        },
+      }));
+      res.end(
+        JSON.stringify(
+          input.messages
+            ? {
+                choices: [
+                  {
+                    finish_reason: "tool_calls",
+                    message: {
+                      role: "assistant",
+                      content: "",
+                      tool_calls: calls,
+                    },
+                  },
+                ],
+              }
+            : {
+                status: "completed",
+                output: calls.map((call: (typeof calls)[number]) => ({
+                  type: "function_call",
+                  call_id: call.id,
+                  name: call.function.name,
+                  arguments: call.function.arguments,
+                })),
+              },
+        ),
+      );
+      return;
+    }
+    const returned = Object.fromEntries(
+      toolOutputs.map(
+        (output: {
+          tool_call_id?: string;
+          call_id?: string;
+          content?: string;
+          output?: string;
+        }) => [
+          output.tool_call_id || output.call_id,
+          JSON.parse(output.content || output.output || "{}"),
+        ],
+      ),
+    );
+    if (isAssessment) {
       counters.questions++;
+      expect(returned.get_assessment_context).toBeTruthy();
       chat(
         JSON.stringify({
           text:
@@ -144,8 +223,9 @@ test.beforeEach(async ({ request }) => {
       );
       return;
     }
-    if (payload.evidence) {
+    if (isEvaluation) {
       counters.evaluations++;
+      expect(returned.get_evaluation_evidence).toBeTruthy();
       chat(
         JSON.stringify({
           level: 1,
@@ -156,65 +236,8 @@ test.beforeEach(async ({ request }) => {
       );
       return;
     }
-    counters.explanations++;
-    if (failText) {
-      res.writeHead(401);
-      res.end(JSON.stringify({ error: "private-key-never-expose" }));
-      return;
-    }
-    const toolResult = messages.find(
-      (m: { role?: string; type?: string }) =>
-        m.role === "tool" || m.type === "function_call_output",
-    );
-    if (input.tools?.length && !toolResult) {
-      if (input.messages)
-        res.end(
-          JSON.stringify({
-            choices: [
-              {
-                finish_reason: "tool_calls",
-                message: {
-                  role: "assistant",
-                  content: "",
-                  tool_calls: [
-                    {
-                      id: "illustration",
-                      type: "function",
-                      function: {
-                        name: "generate_image",
-                        arguments: JSON.stringify({
-                          prompt: "a handbag on a desk",
-                          caption: "课文里的手提包",
-                        }),
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
-        );
-      else
-        res.end(
-          JSON.stringify({
-            status: "completed",
-            output: [
-              {
-                type: "function_call",
-                call_id: "illustration",
-                name: "generate_image",
-                arguments: JSON.stringify({
-                  prompt: "a handbag on a desk",
-                  caption: "课文里的手提包",
-                }),
-              },
-            ],
-          }),
-        );
-      return;
-    }
-    const context = payload.learningContext as
-      | { profile?: { level?: number }; stage?: string }
+    const context = returned.get_current_learning_state as
+      | { stage?: string }
       | undefined;
     chat(
       `## 适合你的详解\n\nThis 是单数指示代词，表示“这个”。\n\n例如：**This is my bag.**（这是我的包。）\n\n${context?.stage || "初学"}：先理解句子，再练习表达。`,
@@ -564,6 +587,90 @@ test("manual personalized explanation calls image tools and reuses durable cache
     ),
   ).toBe(true);
 });
+test("tool selection controls model access, cache and required lesson material", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "chat", false);
+  await page.goto(origin + "/settings");
+  const tools = page.getByRole("region", { name: "AI 工具配置" });
+  await expect(tools.getByRole("checkbox")).toHaveCount(7);
+  for (const checkbox of await tools.getByRole("checkbox").all())
+    await expect(checkbox).toBeChecked();
+  await tools.getByLabel("启用学习档案工具", { exact: true }).uncheck();
+  await tools.getByLabel("启用当前学习状态工具", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "保存系统配置" }).click();
+  await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(
+    tools.getByLabel("启用学习档案工具", { exact: true }),
+  ).not.toBeChecked();
+  await page.goto(origin + "/books/1/lessons/1");
+  await openAI(page);
+  const panel = page.getByRole("complementary", { name: "AI 详解" });
+  await panel.getByRole("button", { name: "生成整课详解" }).click();
+  await expect(panel.getByText("适合你的详解", { exact: true })).toBeVisible();
+  await expect(panel.locator(".ai-context")).toContainText("未读取学习档案");
+  const firstRequest = modelRequests[0];
+  expect(JSON.stringify(firstRequest)).not.toContain("learningContext");
+  expect(JSON.stringify(firstRequest)).not.toContain("handbag");
+  expect(firstRequest.tools).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        function: expect.objectContaining({ name: "get_current_lesson" }),
+      }),
+    ]),
+  );
+  expect(JSON.stringify(firstRequest.tools)).not.toContain(
+    "get_learner_profile",
+  );
+  expect(JSON.stringify(firstRequest.tools)).not.toContain(
+    "get_current_learning_state",
+  );
+  const lookup = await (
+    await request.get(
+      origin +
+        "/api/ai/explanations?book=1&lesson=1&target=" +
+        encodeURIComponent('{"kind":"lesson"}'),
+    )
+  ).json();
+  expect(lookup.result.toolsUsed).toEqual([
+    "get_learning_progress",
+    "get_current_lesson",
+  ]);
+  await page.goto(origin + "/settings");
+  await tools
+    .getByRole("button", { name: "取消全选工具", exact: true })
+    .click();
+  await page.getByRole("button", { name: "保存系统配置" }).click();
+  await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(tools.locator("input:checked")).toHaveCount(0);
+  await page.goto(origin + "/books/1/lessons/1");
+  await openAI(page);
+  await panel
+    .getByRole("button", { name: "生成整课详解", exact: true })
+    .click();
+  await expect(panel.getByRole("alert")).toContainText("当前课文");
+  expect(modelRequests).toHaveLength(2);
+  // Selected text remains usable without any read tools; no profile is implied.
+  await openCourse(page);
+  await page
+    .getByRole("button", { name: "AI 详解句子：", exact: false })
+    .first()
+    .click();
+  await expect(panel.getByText("适合你的详解", { exact: true })).toBeVisible();
+  await expect(panel.locator(".ai-context")).toContainText("未读取学习档案");
+  expect(modelRequests.at(-1)?.tools).toBeUndefined();
+  await page.goto(origin + "/settings");
+  await tools.getByRole("button", { name: "全选工具", exact: true }).click();
+  await expect(tools.locator("input:checked")).toHaveCount(7);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
 test("selected words explain once without starting point reading", async ({
   page,
   request,
@@ -583,7 +690,7 @@ test("selected words explain once without starting point reading", async ({
   const panel = page.getByRole("complementary", { name: "AI 详解" });
   await expect(panel.getByText("适合你的详解", { exact: true })).toBeVisible();
   await expect(panel.locator(".ai-target")).toHaveText("this");
-  expect(counters.explanations).toBe(1);
+  expect(counters.explanations).toBe(2);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
   await openCourse(page);
   await page.locator("[data-word-id='s1-w1']").click();

@@ -96,6 +96,35 @@
   height: 16px;
   flex-shrink: 0;
 }
+.ai-tool-list {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+}
+.ai-tool-item {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.ai-tool-item .ai-check {
+  color: var(--foreground);
+  font-size: 14px;
+  cursor: pointer;
+}
+.ai-tool-item code {
+  display: block;
+  margin: 7px 0;
+  color: var(--primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.ai-tool-item p,
+.ai-tool-item small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.8;
+}
 .ai-card > .ai-check {
   margin-bottom: 24px;
 }
