@@ -1,3 +1,5 @@
+import { startProgressSync } from "./progressSync";
+import "./ai.css";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -36,6 +38,15 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { LearningPlayer } from "./LearningPlayer";
 import { Textbooks, TextbookLesson } from "./Textbooks";
+
+const AISettings = React.lazy(() =>
+  import("./AISettings").then((module) => ({ default: module.AISettings })),
+);
+const LearnerProfile = React.lazy(() =>
+  import("./LearnerProfile").then((module) => ({
+    default: module.LearnerProfile,
+  })),
+);
 
 type Lesson = {
   id: string;
@@ -137,7 +148,7 @@ function Header({ learning, home }: { learning: boolean; home: () => void }) {
         >
           <a
             className={
-              !learning && !window.location.pathname.startsWith("/books")
+              !learning && window.location.pathname === "/"
                 ? "nav-active bg-secondary text-primary font-medium"
                 : "text-muted-foreground"
             }
@@ -157,7 +168,27 @@ function Header({ learning, home }: { learning: boolean; home: () => void }) {
                 : "text-muted-foreground"
             }
           >
-            电子书
+            课程
+          </a>
+          <a
+            href="/learning-profile"
+            className={
+              window.location.pathname === "/learning-profile"
+                ? "nav-active bg-secondary text-primary font-medium"
+                : "text-muted-foreground"
+            }
+          >
+            学习档案
+          </a>
+          <a
+            href="/settings"
+            className={
+              window.location.pathname === "/settings"
+                ? "nav-active bg-secondary text-primary font-medium"
+                : "text-muted-foreground"
+            }
+          >
+            系统配置
           </a>
           <span className="header-divider hidden h-3 w-px bg-border sm:block" />
           <span className="header-note hidden text-xs text-muted-foreground md:block">
@@ -762,7 +793,12 @@ function Classroom({
         <ChevronRight size={14} />
         <span>{lesson.label}</span>
       </div>
-      <div className="classroom-grid grid items-start gap-7 xl:grid-cols-[minmax(0,1fr)_310px]">
+      <div
+        className={cn(
+          "classroom-grid grid items-start gap-7",
+          isText ? "classroom-text-mode" : "xl:grid-cols-[minmax(0,1fr)_310px]",
+        )}
+      >
         <section className="watch-column min-w-0">
           {(lesson.reading || lesson.textbook) && (
             <div
@@ -1014,6 +1050,19 @@ function Classroom({
 
 function App() {
   const [pathname, setPathname] = useState(window.location.pathname);
+  const utilityPage =
+    pathname === "/settings" || pathname === "/learning-profile";
+  const [syncStatus, setSyncStatus] = useState("");
+  useEffect(() => {
+    const stop = startProgressSync();
+    const listener = (event: Event) =>
+      setSyncStatus((event as CustomEvent<string>).detail);
+    window.addEventListener("progress-sync-status", listener);
+    return () => {
+      stop();
+      window.removeEventListener("progress-sync-status", listener);
+    };
+  }, []);
   const [course, setCourse] = useState<Course | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -1095,8 +1144,12 @@ function App() {
   };
   const lesson = course?.lessons.find((l) => l.id === id);
   useEffect(() => {
+    if (pathname === "/settings" || pathname === "/learning-profile") {
+      document.title = `${pathname === "/settings" ? "系统配置" : "学习档案"} | FirstLeap`;
+      return;
+    }
     if (pathname.startsWith("/books")) {
-      document.title = "电子书与精听 | FirstLeap";
+      document.title = "课程与精听 | FirstLeap";
       return;
     }
     document.title = lesson
@@ -1128,7 +1181,8 @@ function App() {
           浏览器暂时无法保存进度；本次学习仍可正常进行。
         </div>
       )}
-      {!pathname.startsWith("/books") &&
+      {!utilityPage &&
+        !pathname.startsWith("/books") &&
         (failed || (course && !course.sourceAvailable && !course.indexing)) && (
           <div
             className="notice mx-auto my-4 flex max-w-6xl flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary p-4 text-xs text-primary"
@@ -1145,7 +1199,19 @@ function App() {
             </Button>
           </div>
         )}
-      {pathname.startsWith("/books") ? (
+      {pathname === "/settings" ? (
+        <React.Suspense
+          fallback={<main className="ai-page">正在打开系统配置…</main>}
+        >
+          <AISettings />
+        </React.Suspense>
+      ) : pathname === "/learning-profile" ? (
+        <React.Suspense
+          fallback={<main className="ai-page">正在打开学习档案…</main>}
+        >
+          <LearnerProfile />
+        </React.Suspense>
+      ) : pathname.startsWith("/books") ? (
         <Textbooks pathname={pathname} />
       ) : loading ? (
         <div className="page-state flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
@@ -1204,6 +1270,11 @@ function App() {
           FirstLeap.
         </a>
         <span>一课一步，学有所获。</span>
+        {syncStatus && (
+          <span className="sync-status" aria-label="学习进度同步状态">
+            {syncStatus}
+          </span>
+        )}
         <span className="footer-end ml-auto flex items-center gap-2">
           MADE FOR YOUR NEXT CHAPTER <span>↗</span>
         </span>

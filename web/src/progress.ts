@@ -1,3 +1,4 @@
+import { queueProgressPatch } from "./progressSync";
 export type LessonProgress = {
   position: number;
   duration: number;
@@ -74,7 +75,22 @@ export function loadProgress(key = STORAGE_KEY): Progress {
 
 export function saveProgress(progress: Progress, key = STORAGE_KEY): boolean {
   try {
+    const previous = parseProgress(localStorage.getItem(key));
     localStorage.setItem(key, JSON.stringify(progress));
+    const track = key === READING_STORAGE_KEY ? "reading" : "lecture";
+    for (const [id, record] of Object.entries(progress.lessons)) {
+      const old = previous.lessons[id];
+      const changed = Object.fromEntries(
+        Object.entries(record).filter(
+          ([field, value]) =>
+            field !== "updatedAt" &&
+            value !== old?.[field as keyof LessonProgress],
+        ),
+      );
+      queueProgressPatch(track, id, changed);
+    }
+    if (progress.lastLesson !== previous.lastLesson)
+      queueProgressPatch(track, "@last", { lastLesson: progress.lastLesson });
     return true;
   } catch {
     return false;

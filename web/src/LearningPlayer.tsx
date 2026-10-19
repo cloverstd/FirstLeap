@@ -1,3 +1,4 @@
+import { flushProgressSync } from "./progressSync";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import Artplayer from "artplayer";
@@ -73,6 +74,7 @@ export function LearningPlayer(props: Props) {
   latest.current = props;
   const saved = useRef(props.progress);
   const ready = useRef(false);
+  const interacted = useRef(false);
   const pausedEndSeek = useRef(false);
   const [controls, setControls] = useState<HTMLElement | null>(null);
   const [seekReady, setSeekReady] = useState(false);
@@ -96,15 +98,17 @@ export function LearningPlayer(props: Props) {
     [],
   );
 
-  const persist = () => {
+  const persist = (immediate = false) => {
     const video = player.current?.video;
     if (!video || !ready.current || !Number.isFinite(video.duration)) return;
     const patch = { position: video.currentTime, duration: video.duration };
     saved.current = { ...saved.current, ...patch } as LessonProgress;
     latest.current.update(latest.current.progressID, patch, true);
+    if (immediate) flushProgressSync();
   };
 
   const seekTo = (target: number) => {
+    interacted.current = true;
     const art = player.current;
     if (!art || !ready.current) return;
     const video = art.video;
@@ -113,7 +117,7 @@ export function LearningPlayer(props: Props) {
     video.currentTime = time;
     setPosition(time);
     art.emit("setBar", "played", time / video.duration);
-    persist();
+    persist(true);
   };
   const seek = (offset: number) => {
     if (!ready.current) return;
@@ -195,6 +199,7 @@ export function LearningPlayer(props: Props) {
       timeline.setAttribute("aria-disabled", "true");
     });
     art.on("video:play", () => {
+      interacted.current = true;
       claimMedia(video);
       pausedEndSeek.current = false;
       setPlaying(true);
@@ -203,7 +208,7 @@ export function LearningPlayer(props: Props) {
     art.on("video:playing", () => setError(false));
     art.on("video:pause", () => {
       setPlaying(false);
-      persist();
+      persist(true);
     });
     art.on("video:timeupdate", () => {
       setPosition(video.currentTime);
@@ -220,7 +225,7 @@ export function LearningPlayer(props: Props) {
     art.on("video:seeked", () => {
       setPosition(video.currentTime);
       timelineValue();
-      persist();
+      persist(true);
     });
     art.on("video:ratechange", () => setRate(video.playbackRate));
     const volumeChanged = () => {
@@ -231,7 +236,7 @@ export function LearningPlayer(props: Props) {
     volumeChanged();
     art.on("video:error", () => {
       // Preserve the last valid snapshot before disabling further seeks/saves.
-      persist();
+      persist(true);
       ready.current = false;
       setSeekReady(false);
       setError(true);
@@ -253,23 +258,24 @@ export function LearningPlayer(props: Props) {
       if (pausedEndSeek.current) return;
       if (current.reading && current.loopReading) {
         video.currentTime = 0;
-        persist();
+        persist(true);
         play();
       } else current.onEnded();
     });
     const visibility = () => {
-      if (document.visibilityState === "hidden") persist();
+      if (document.visibilityState === "hidden") persist(true);
     };
-    window.addEventListener("pagehide", persist);
+    const pageHide = () => persist(true);
+    window.addEventListener("pagehide", pageHide);
     document.addEventListener("visibilitychange", visibility);
     const otherMedia = (event: Event) => {
       if ((event as CustomEvent).detail !== video) video.pause();
     };
     window.addEventListener(MEDIA_EVENT, otherMedia);
     return () => {
-      persist();
+      persist(true);
       video.pause();
-      window.removeEventListener("pagehide", persist);
+      window.removeEventListener("pagehide", pageHide);
       document.removeEventListener("visibilitychange", visibility);
       window.removeEventListener(MEDIA_EVENT, otherMedia);
       art.destroy();
@@ -278,6 +284,28 @@ export function LearningPlayer(props: Props) {
     // Each resource is keyed by its lesson and mode; state changes never recreate it.
   }, [props.source, props.progressID]);
 
+  useEffect(() => {
+    const restore = (event: Event) => {
+      if (interacted.current) return;
+      const tracks = (
+        event as CustomEvent<Record<string, Record<string, LessonProgress>>>
+      ).detail;
+      const record =
+        tracks[props.reading ? "reading" : "lecture"]?.[props.progressID];
+      if (!record || typeof record.position !== "number") return;
+      saved.current = record;
+      const video = player.current?.video;
+      if (video && ready.current && video.paused) {
+        const target = resumePosition(record, video.duration);
+        if (Math.abs(video.currentTime - target) > 0.05) {
+          video.currentTime = target;
+          setPosition(target);
+        }
+      }
+    };
+    window.addEventListener("remote-progress-applied", restore);
+    return () => window.removeEventListener("remote-progress-applied", restore);
+  }, [props.progressID, props.reading]);
   useEffect(() => {
     const changed = () =>
       setNativeFullscreen(document.fullscreenElement === shell.current);

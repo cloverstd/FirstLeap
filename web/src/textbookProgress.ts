@@ -1,3 +1,4 @@
+import { queueProgressPatch } from "./progressSync";
 import { useSyncExternalStore } from "react";
 
 export const TEXTBOOK_PROGRESS_KEY = "firstleap.textbook.progress.v1";
@@ -141,6 +142,13 @@ export function writePosition(
     success = false;
   }
   cached = data;
+  queueProgressPatch("text", key, patch);
+  if (markLast) {
+    queueProgressPatch("text", key, {
+      lastVisitedAt: data.lessons[key].lastVisitedAt,
+    });
+    queueProgressPatch("text", "@last", { lastLesson: key });
+  }
   changed();
   return success;
 }

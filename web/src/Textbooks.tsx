@@ -1,3 +1,6 @@
+import { flushProgressSync } from "./progressSync";
+import { AIWorkspace } from "./AIWorkspace";
+import type { AITarget } from "./ai";
 import {
   useEffect,
   useMemo,
@@ -19,6 +22,7 @@ import {
   Pause,
   Play,
   Repeat,
+  Sparkles,
   RotateCcw,
   Volume2,
 } from "lucide-react";
@@ -316,7 +320,7 @@ export function Textbooks({ pathname }: { pathname: string }) {
           className="inline-flex items-center gap-1.5 hover:text-primary"
         >
           <BookOpen className="size-3.5" />
-          电子书
+          课程
         </Link>
         {book > 0 && (
           <>
@@ -582,19 +586,21 @@ export function TextbookLesson({
   }, [value, embedded]);
   if (!value) return <Loading error={error} retry={retry} />;
   return (
-    <ReadingRoom
-      key={`${book}:${lesson}:${value.revision}`}
-      lesson={value}
-      embedded={embedded}
-    />
+    <AIWorkspace key={`${book}:${lesson}:${value.revision}`} lesson={value}>
+      {(explain) => (
+        <ReadingRoom lesson={value} embedded={embedded} onExplain={explain} />
+      )}
+    </AIWorkspace>
   );
 }
 function ReadingRoom({
   lesson,
   embedded,
+  onExplain,
 }: {
   lesson: TextLesson;
   embedded: boolean;
+  onExplain: (target: AITarget) => void;
 }) {
   const base = `/api/books/${lesson.book}/lessons/${lesson.lesson}`;
   const key = `${lesson.book}:${lesson.lesson}`;
@@ -608,6 +614,7 @@ function ReadingRoom({
     offset: 0,
     id: "full",
   });
+  const interacted = useRef(false);
   const generation = useRef(0),
     playIntent = useRef(false),
     switching = useRef(false),
@@ -673,7 +680,7 @@ function ReadingRoom({
   const save = (patch: Partial<ReadingPosition>, markLast = false) => {
     if (!writePosition(key, patch, markLast)) setStorageError(true);
   };
-  const persist = () =>
+  const persist = (immediate = false) => {
     save({
       position: fullPosition.current,
       duration: lesson.duration,
@@ -687,6 +694,8 @@ function ReadingRoom({
             fullPosition.current < s.end,
         )?.id || readPosition(key).sentence,
     });
+    if (immediate) flushProgressSync();
+  };
   const clearRepeat = () => {
     if (repeatTimer.current !== null) clearTimeout(repeatTimer.current);
     repeatTimer.current = null;
@@ -705,6 +714,7 @@ function ReadingRoom({
     if (mode !== "selection" && repeatTimer.current !== null) stop();
   };
   const play = () => {
+    interacted.current = true;
     const media = audio.current;
     if (!media) return;
     playIntent.current = true;
@@ -725,6 +735,7 @@ function ReadingRoom({
     });
   };
   const start = (next: Source, autoplay = true, seek?: number) => {
+    interacted.current = true;
     const media = audio.current;
     if (!media) return;
     if (
@@ -733,7 +744,7 @@ function ReadingRoom({
       media.currentSrc === new URL(source.current.url, location.href).href
     ) {
       fullPosition.current = media.currentTime;
-      persist();
+      persist(true);
     }
     const sameFull =
       source.current.kind === "full" &&
@@ -761,7 +772,7 @@ function ReadingRoom({
       setPosition(next.kind === "full" ? fullPosition.current : next.offset);
     if (sameFull) {
       media.currentTime = Math.min(fullPosition.current, media.duration);
-      persist();
+      persist(true);
     } else {
       switching.current = true;
       media.src = next.url;
@@ -823,6 +834,45 @@ function ReadingRoom({
     setFocusedMarker(marker ?? null);
   };
   useEffect(() => {
+    const restore = (event: Event) => {
+      if (
+        interacted.current ||
+        playIntent.current ||
+        source.current.kind !== "full"
+      )
+        return;
+      const tracks = (
+        event as CustomEvent<
+          Record<string, Record<string, Partial<ReadingPosition>>>
+        >
+      ).detail;
+      const remote = tracks.text?.[key];
+      if (!remote || typeof remote.position !== "number") return;
+      const target = Math.max(
+        0,
+        Math.min(
+          remote.position >= lesson.duration - 0.2 ? 0 : remote.position,
+          lesson.duration,
+        ),
+      );
+      fullPosition.current = target;
+      if (remote.rate && RATES.includes(remote.rate)) {
+        rateRef.current = remote.rate;
+        setRate(remote.rate);
+      }
+      const media = audio.current;
+      if (media && media.readyState >= 1 && media.paused) {
+        if (Math.abs(media.currentTime - target) > 0.05)
+          media.currentTime = target;
+        if (media.playbackRate !== rateRef.current)
+          media.playbackRate = rateRef.current;
+      }
+      setPosition(target);
+    };
+    window.addEventListener("remote-progress-applied", restore);
+    return () => window.removeEventListener("remote-progress-applied", restore);
+  }, [key]);
+  useEffect(() => {
     const media = audio.current!;
     media.src = source.current.url;
     media.load();
@@ -830,9 +880,9 @@ function ReadingRoom({
     const other = (e: Event) => {
       if ((e as CustomEvent).detail !== media) stop();
     };
-    const hide = () => persist();
+    const hide = () => persist(true);
     const visibility = () => {
-      if (document.visibilityState === "hidden") persist();
+      if (document.visibilityState === "hidden") persist(true);
     };
     window.addEventListener(MEDIA_EVENT, other);
     window.addEventListener("pagehide", hide);
@@ -841,7 +891,7 @@ function ReadingRoom({
       playIntent.current = false;
       generation.current++;
       clearRepeat();
-      persist();
+      persist(true);
       media.pause();
       media.removeAttribute("src");
       media.load();
@@ -914,12 +964,12 @@ function ReadingRoom({
     if (source.current.kind === "full") {
       fullPosition.current = lesson.duration;
       save({ completed: true });
-      persist();
+      persist(true);
       if (loopRef.current === "lesson") {
         fullPosition.current = 0;
         media.currentTime = 0;
         setPosition(0);
-        persist();
+        persist(true);
         play();
       } else {
         playIntent.current = false;
@@ -979,6 +1029,8 @@ function ReadingRoom({
         embedded && "embedded-reading",
       )}
       aria-label="课文精听"
+      data-reading-position={position}
+      data-reading-sentence={current?.id || record.sentence}
       tabIndex={0}
       onKeyDown={keyDown}
     >
@@ -996,7 +1048,7 @@ function ReadingRoom({
               fullPosition.current,
               media.duration || lesson.duration,
             );
-            persist();
+            persist(true);
           }
           setError("");
         }}
@@ -1024,7 +1076,7 @@ function ReadingRoom({
             media.currentSrc === new URL(source.current.url, location.href).href
           ) {
             fullPosition.current = media.currentTime;
-            persist();
+            persist(true);
           }
         }}
         onTimeUpdate={tick}
@@ -1070,7 +1122,7 @@ function ReadingRoom({
               to={`/books/${lesson.book}/lessons/${lesson.lesson}`}
               className={buttonVariants({ variant: "ghost", size: "sm" })}
             >
-              打开电子书
+              打开课程
               <BookOpen className="ml-1 size-4" />
             </Link>
           )}
@@ -1192,7 +1244,11 @@ function ReadingRoom({
                           >
                             <Play className="size-3.5 fill-current" />
                           </Button>
-                          <div className="min-w-0 flex-1 pt-1 font-serif text-[19px] leading-9 sm:text-[21px]">
+                          <div
+                            data-english=""
+                            data-sentence-id={sentence.id}
+                            className="min-w-0 flex-1 pt-1 font-serif text-[19px] leading-9 sm:text-[21px]"
+                          >
                             {sentence.words.length
                               ? sentence.words.map((word) => (
                                   <span key={word.id}>
@@ -1205,13 +1261,14 @@ function ReadingRoom({
                                         selected === word.id &&
                                           "selected-word ring-1 ring-primary/35",
                                       )}
+                                      data-word-id={word.id}
                                       aria-label={`点读单词：${word.text}`}
                                       aria-current={
                                         currentWord?.id === word.id
                                           ? "true"
                                           : undefined
                                       }
-                                      disabled={
+                                      aria-disabled={
                                         word.start === null || word.end === null
                                       }
                                       title={
@@ -1220,6 +1277,8 @@ function ReadingRoom({
                                           : "听这个词的课文原音"
                                       }
                                       onClick={() =>
+                                        word.start !== null &&
+                                        word.end !== null &&
                                         start({
                                           url: `${base}/clips/${word.id}`,
                                           kind: "word",
@@ -1237,6 +1296,21 @@ function ReadingRoom({
                                 ))
                               : sentence.text}
                           </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="mt-1 size-8 shrink-0 text-primary/65"
+                            aria-label={`AI 详解句子：${sentence.text}`}
+                            onClick={() =>
+                              onExplain({
+                                kind: "sentence",
+                                id: sentence.id,
+                                text: sentence.text,
+                              })
+                            }
+                          >
+                            <Sparkles className="size-3.5" />
+                          </Button>
                           {sentence.translationZh && (
                             <CollapsibleTrigger asChild>
                               <Button
@@ -1321,6 +1395,21 @@ function ReadingRoom({
                         {word.meaning}
                       </p>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 shrink-0"
+                      aria-label={`AI 详解单词：${word.word}`}
+                      onClick={() =>
+                        onExplain({
+                          kind: "vocabulary",
+                          id: word.id,
+                          text: word.word,
+                        })
+                      }
+                    >
+                      <Sparkles className="size-4" />
+                    </Button>
                     <Button
                       variant="outline"
                       size="icon"
@@ -1430,7 +1519,7 @@ function ReadingRoom({
               rateRef.current = next;
               setRate(next);
               if (audio.current) audio.current.playbackRate = next;
-              persist();
+              persist(true);
             }}
           >
             <SelectTrigger

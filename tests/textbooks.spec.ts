@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -385,7 +385,7 @@ test("full lesson seek, highlights and resume survive temporary point reading", 
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("classroom text mode releases video and shares progress with the ebook", async ({
+test("classroom text mode releases video and shares progress with the course", async ({
   page,
 }) => {
   await page.goto("/learn/lesson1");
@@ -871,7 +871,7 @@ test("inline markers and dragging synchronize passage anchors without starting a
   );
   await page.mouse.down();
   await page.mouse.move(
-    slider!.x + 8 + (slider!.width - 16) * 0.9,
+    slider!.x + slider!.width * 0.9,
     slider!.y + slider!.height / 2,
     { steps: 12 },
   );

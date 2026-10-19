@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,7 @@ type Course struct {
 	Indexing        bool     `json:"indexing"`
 }
 type App struct {
+	ai                  *aiService
 	cfg                 Config
 	mu                  sync.RWMutex
 	entries             map[string]entry
@@ -103,6 +105,11 @@ func New(cfg Config) (*App, error) {
 	}
 	if a.entries == nil {
 		a.entries = make(map[string]entry)
+	}
+	var err error
+	a.ai, err = newAIService(a)
+	if err != nil {
+		return nil, err
 	}
 	return a, nil
 }
@@ -340,6 +347,7 @@ func failure(w http.ResponseWriter, status int, message string) {
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	a.ai.routes(mux)
 	a.textbookRoutes(mux)
 	mux.HandleFunc("GET /api/lessons/{id}/reading/video", a.readingVideo)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, map[string]bool{"ok": true}) })
@@ -451,6 +459,20 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'")
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && strings.HasPrefix(r.URL.Path, "/api/") {
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				parsed, err := url.Parse(origin)
+				if err != nil || parsed.Host != r.Host {
+					failure(w, http.StatusForbidden, "请从当前站点提交请求")
+					return
+				}
+			}
+			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+				failure(w, http.StatusForbidden, "请从当前站点提交请求")
+				return
+			}
+		}
 		mux.ServeHTTP(w, r)
 	})
 }

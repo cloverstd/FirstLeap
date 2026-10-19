@@ -261,13 +261,13 @@ func (a *App) textbookRoutes(mux *http.ServeMux) {
 		n := bookNumber(r)
 		format := r.PathValue("format")
 		if n == 0 || (format != "epub" && format != "pdf" && format != "azw3" && format != "mobi") || a.cfg.TextbookRoot == "" {
-			failure(w, 404, "电子书不存在")
+			failure(w, 404, "课程不存在")
 			return
 		}
 		name := "新概念英语" + bookNames[n] + "." + format
 		f, err := openAt(a.cfg.TextbookRoot, name)
 		if err != nil {
-			failure(w, 404, "电子书暂时不可用")
+			failure(w, 404, "课程暂时不可用")
 			return
 		}
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"nce-book%d.%s\"", n, format))
