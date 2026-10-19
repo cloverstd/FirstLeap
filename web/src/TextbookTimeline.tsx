@@ -8,7 +8,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
 import {
   audioClock,
   groupMarkers,
@@ -87,10 +86,10 @@ export function TextbookPlayerSettings({
           <Tabs value={mode} onValueChange={(v) => changeMode(v as MarkerMode)}>
             <TabsList className="w-full">
               <TabsTrigger value="sentence" className="flex-1 text-xs">
-                句子起止
+                句子起点
               </TabsTrigger>
               <TabsTrigger value="paragraph" className="flex-1 text-xs">
-                段落起止
+                段落起点
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -219,12 +218,7 @@ export function TextbookTimeline({
                     onKeyDown={(event) => event.stopPropagation()}
                     onClick={() => seekMarker(first)}
                   >
-                    <span
-                      className={cn(
-                        "h-1.5 w-0.5 bg-card ring-1 ring-primary/60",
-                        first.edge === "end" && "rounded-full",
-                      )}
-                    />
+                    <span className="h-1.5 w-0.5 bg-card ring-1 ring-primary/60" />
                   </button>
                 );
               },

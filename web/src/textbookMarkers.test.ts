@@ -3,6 +3,7 @@ import {
   buildMarkers,
   groupMarkers,
   markerAtPosition,
+  markerLabel,
 } from "./textbookMarkers";
 const paragraphs = [
   {
@@ -19,28 +20,26 @@ const paragraphs = [
   { id: "p2", sentences: [{ id: "s3", text: "Goodbye", start: 8, end: 10 }] },
 ];
 describe("audio boundary markers", () => {
-  it("includes both edges and retains coincident sentence boundaries", () => {
+  it("only includes sentence starts, including shared end/start times once", () => {
     const markers = buildMarkers(paragraphs, "sentence", 12);
-    expect(markers.map((m) => m.time)).toEqual([2, 4, 4, 6, 8, 10]);
-    expect(markers.filter((m) => m.time === 4).map((m) => m.edge)).toEqual([
-      "end",
-      "start",
+    expect(markers.map((m) => [m.id, m.time])).toEqual([
+      ["s1-start", 2],
+      ["s2-start", 4],
+      ["s3-start", 8],
     ]);
+    expect(markers.every((m) => markerLabel(m).includes("起点"))).toBe(true);
   });
-  it("derives paragraph edges from timed body sentences", () => {
+  it("only includes paragraph starts from timed body sentences", () => {
     expect(
       buildMarkers(paragraphs, "paragraph", 12).map((m) => [m.id, m.time]),
     ).toEqual([
       ["p1-start", 2],
-      ["p1-end", 6],
       ["p2-start", 8],
-      ["p2-end", 10],
     ]);
   });
   it("maps each boundary to the same content anchor and follows through gaps", () => {
     const markers = buildMarkers(paragraphs, "sentence", 12);
     expect(markers.filter((m) => m.time === 4).map((m) => m.targetId)).toEqual([
-      "s1",
       "s2",
     ]);
     expect(markerAtPosition(markers, 1)).toBeUndefined();

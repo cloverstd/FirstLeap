@@ -639,7 +639,7 @@ test("whole lesson repeats naturally and manual completion survives playback sav
   ).toHaveAttribute("aria-valuenow", "100");
 });
 
-test("both boundary kinds seek without changing playback and preferences are per lesson", async ({
+test("sentence and paragraph starts seek without changing playback and preferences are per lesson", async ({
   page,
 }) => {
   await page.route("**/api/books/1/lessons/3", (route) =>
@@ -651,7 +651,7 @@ test("both boundary kinds seek without changing playback and preferences are per
   await loaded(page);
   const seekToMarker = (name: RegExp) => selectMarker(page, name);
   await expect(
-    page.getByRole("tab", { name: "句子起止", exact: true }),
+    page.getByRole("tab", { name: "句子起点", exact: true }),
   ).toHaveCount(0);
   await seekToMarker(/^第 2 句起点/);
   await loaded(page);
@@ -661,34 +661,35 @@ test("both boundary kinds seek without changing playback and preferences are per
     )
     .toBeCloseTo(5, 1);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
-  await seekToMarker(/^第 1 句终点/);
+  await seekToMarker(/^第 1 句起点/);
   await expect
     .poll(() =>
       page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
     )
-    .toBeCloseTo(3.8, 1);
+    .toBeCloseTo(2, 1);
   await page.getByRole("button", { name: "播放精听", exact: true }).click();
   await seekToMarker(/^第 2 句起点/);
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
   await page.getByRole("button", { name: "暂停精听", exact: true }).click();
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
-  await page.getByRole("tab", { name: "段落起止", exact: true }).click();
+  await expect(page.getByRole("button", { name: /终点/ })).toHaveCount(0);
+  await page.getByRole("tab", { name: "段落起点", exact: true }).click();
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
-  await seekToMarker(/^第 1 段终点/);
+  await seekToMarker(/^第 1 段起点/);
   await expect
     .poll(() =>
       page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
     )
-    .toBeCloseTo(6.8, 1);
+    .toBeCloseTo(2, 1);
   await page.goto("/books/1/lessons/3");
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
-    page.getByRole("tab", { name: "句子起止", exact: true }),
+    page.getByRole("tab", { name: "句子起点", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.goto("/books/1/lessons/1");
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
-    page.getByRole("tab", { name: "段落起止", exact: true }),
+    page.getByRole("tab", { name: "段落起点", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await expect(
@@ -787,7 +788,7 @@ test("classroom theme has no horizontal overflow and keeps the audio dock usable
       ).toBeLessThan(2);
     }
     await expect(
-      page.getByRole("tab", { name: "句子起止", exact: true }),
+      page.getByRole("tab", { name: "句子起点", exact: true }),
     ).toHaveCount(0);
     const rail = await page.locator('[data-slot="slider-track"]').boundingBox();
     for (const marker of await page
@@ -832,10 +833,10 @@ test("inline markers and dragging synchronize passage anchors without starting a
   );
   await page.goto("/books/1/lessons/1");
   await loaded(page);
-  await selectMarker(page, /^第 1 句终点/);
-  const first = page.locator('[id="reading-1:1-s1"]');
+  await selectMarker(page, /^第 2 句起点/);
+  const first = page.locator('[id="reading-1:1-s2"]');
   await expect(first).toHaveAttribute("aria-current", "true");
-  await expect(page.locator('[id="reading-1:1-s2"]')).not.toHaveAttribute(
+  await expect(page.locator('[id="reading-1:1-s1"]')).not.toHaveAttribute(
     "aria-current",
     "true",
   );
@@ -888,15 +889,19 @@ test("inline markers and dragging synchronize passage anchors without starting a
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
 
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
-  await page.getByRole("tab", { name: "段落起止", exact: true }).click();
-  await page.getByRole("button", { name: /^第 1 段终点/ }).click();
+  await page.getByRole("tab", { name: "段落起点", exact: true }).click();
+  await expect(page.getByRole("button", { name: /终点/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /^第 1 段起点/ }).click();
   await expect(page.locator('[id="reading-1:1-paragraph-p1"]')).toHaveAttribute(
     "aria-current",
     "true",
   );
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 4.6);
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 1);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
   await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await page.locator("audio").evaluate((a: HTMLAudioElement) => {
+    a.currentTime = 5.8;
+  });
   await expect(page.locator('[id="reading-1:1-paragraph-p2"]')).toHaveAttribute(
     "aria-current",
     "true",
@@ -908,16 +913,27 @@ test("dense inline boundaries open an exact selection on a narrow screen", async
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 800 });
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        paragraphs: [
+          { id: "p0", sentences: [sentence("s1", 2), sentence("s2", 3)] },
+        ],
+      },
+    }),
+  );
   await page.goto("/books/1/lessons/1");
   await loaded(page);
   await page
     .getByRole("button", { name: "2 个音频断点", exact: true })
     .first()
     .click();
-  await page.getByRole("button", { name: /^第 1 句终点/ }).click();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 3.8);
+  await expect(page.getByRole("button", { name: /终点/ })).toHaveCount(0);
+  await page.getByRole("button", { name: /^第 2 句起点/ }).click();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 3);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
-  await expect(page.locator('[id="reading-1:1-s1"]')).toHaveAttribute(
+  await expect(page.locator('[id="reading-1:1-s2"]')).toHaveAttribute(
     "aria-current",
     "true",
   );

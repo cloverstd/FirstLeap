@@ -10,7 +10,6 @@ export type AudioMarker = {
   id: string;
   time: number;
   targetId: string;
-  edge: "start" | "end";
   index: number;
   text: string;
   mode: MarkerMode;
@@ -45,26 +44,14 @@ export function buildMarkers(
             : [];
         });
   return items
-    .flatMap((item, index) => [
-      {
-        id: `${item.id}-start`,
-        time: item.start!,
-        targetId: item.id,
-        edge: "start" as const,
-        index: index + 1,
-        text: item.text,
-        mode,
-      },
-      {
-        id: `${item.id}-end`,
-        time: item.end!,
-        targetId: item.id,
-        edge: "end" as const,
-        index: index + 1,
-        text: item.text,
-        mode,
-      },
-    ])
+    .map((item, index) => ({
+      id: `${item.id}-start`,
+      time: item.start!,
+      targetId: item.id,
+      index: index + 1,
+      text: item.text,
+      mode,
+    }))
     .sort((a, b) => a.time - b.time);
 }
 export function groupMarkers(
@@ -87,17 +74,14 @@ export function groupMarkers(
 export const audioClock = (seconds: number) =>
   `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds) % 60)).padStart(2, "0")}`;
 export const markerLabel = (m: AudioMarker) =>
-  `第 ${m.index} ${m.mode === "sentence" ? "句" : "段"}${m.edge === "start" ? "起点" : "终点"} · ${audioClock(m.time)}`;
+  `第 ${m.index} ${m.mode === "sentence" ? "句" : "段"}起点 · ${audioClock(m.time)}`;
 
-// Keep the preceding anchor during pauses between sentences. At a shared
-// boundary, the incoming sentence takes over; an explicit end-marker selection
-// can still retain its own target while paused.
+// Keep the preceding anchor until the next sentence or paragraph starts.
 export function markerAtPosition(markers: AudioMarker[], position: number) {
   let current: AudioMarker | undefined;
   for (const marker of markers) {
     if (marker.time > position) break;
-    if (!current || marker.time > current.time || marker.edge === "start")
-      current = marker;
+    current = marker;
   }
   return current;
 }
