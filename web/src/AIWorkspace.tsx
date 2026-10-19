@@ -373,9 +373,11 @@ function ExplanationPanel({
 }
 export function AIWorkspace({
   lesson,
+  heading,
   children,
 }: {
   lesson: TextLesson;
+  heading: ReactNode;
   children: (explain: (target: AITarget) => void) => ReactNode;
 }) {
   const [target, setTarget] = useState<AITarget>({ kind: "lesson" }),
@@ -454,7 +456,7 @@ export function AIWorkspace({
   const active = () => {
     const reader = root.current?.querySelector<HTMLElement>(".reading-room");
     const completed =
-      reader
+      root.current
         ?.querySelector(".reading-heading button[aria-pressed]")
         ?.getAttribute("aria-pressed") === "true";
     return {
@@ -466,6 +468,7 @@ export function AIWorkspace({
   };
   return (
     <div className="ai-workspace" ref={root}>
+      <div className="ai-lesson-heading">{heading}</div>
       <div className="ai-mobile-tabs" role="group" aria-label="课程与 AI 面板">
         <Button
           variant={tab === "course" ? "secondary" : "ghost"}

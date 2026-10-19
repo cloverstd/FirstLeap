@@ -115,7 +115,7 @@ function ProfileForm({
   return (
     <>
       <form
-        className="ai-card ai-form"
+        className="ai-card ai-form ai-profile-form"
         onSubmit={(e) => {
           e.preventDefault();
           void save();
@@ -218,7 +218,7 @@ function ProfileForm({
         </div>
       </form>
       {profile.history.length > 0 && (
-        <section className="ai-card">
+        <section className="ai-card ai-profile-history">
           <h2>能力调整记录</h2>
           {profile.history.slice(0, 8).map((change) => (
             <div className="ai-profile-change" key={change.id}>
@@ -529,7 +529,7 @@ function Assessment({ refresh }: { refresh: () => void }) {
 export function LearnerProfile() {
   const resource = useAPI<Profile>("/api/learner/profile");
   return (
-    <main className="ai-page">
+    <main className="ai-page page-shell">
       <header className="ai-page-heading">
         <GraduationCap size={27} />
         <div>
@@ -537,19 +537,21 @@ export function LearnerProfile() {
           <p>让每一次讲解，都适合你现在的能力与进度。</p>
         </div>
       </header>
-      <Assessment refresh={resource.reload} />
-      {resource.value ? (
-        <ProfileForm
-          key={resource.value.revision}
-          profile={resource.value}
-          refresh={resource.reload}
-        />
-      ) : (
-        <div className="ai-card" role="status">
-          {resource.error || "正在加载学习档案…"}
-          {resource.error && <Button onClick={resource.reload}>重试</Button>}
-        </div>
-      )}
+      <div className="ai-profile-grid">
+        <Assessment refresh={resource.reload} />
+        {resource.value ? (
+          <ProfileForm
+            key={resource.value.revision}
+            profile={resource.value}
+            refresh={resource.reload}
+          />
+        ) : (
+          <div className="ai-card" role="status">
+            {resource.error || "正在加载学习档案…"}
+            {resource.error && <Button onClick={resource.reload}>重试</Button>}
+          </div>
+        )}
+      </div>
     </main>
   );
 }

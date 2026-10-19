@@ -812,6 +812,93 @@ test("classroom theme has no horizontal overflow and keeps the audio dock usable
   });
 });
 
+test("wide course panels align below the lesson heading and use the screen width", async ({
+  page,
+}) => {
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  for (const width of [1024, 1440, 1920, 2560, 3840]) {
+    await page.setViewportSize({ width, height: 1080 });
+    const heading = await page.locator(".reading-heading").boundingBox();
+    const course = await page.locator(".reading-tabs").boundingBox();
+    const explanation = await page.locator(".ai-panel").boundingBox();
+    const header = await page.locator(".header-inner").boundingBox();
+    expect(Math.abs(course!.y - explanation!.y)).toBeLessThan(1);
+    expect(course!.y).toBeGreaterThan(heading!.y + heading!.height);
+    expect(explanation!.x).toBeGreaterThan(course!.x + course!.width);
+    expect(heading!.width).toBeGreaterThan(width * 0.9);
+    expect(course!.x).toBe(48);
+    expect(width - explanation!.x - explanation!.width).toBe(48);
+    expect(header!.width).toBe(width);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+  }
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const loop = page.getByRole("button", { name: "循环模式", exact: true });
+  await expect(loop).toHaveText("");
+  await expect(loop).toHaveAttribute("title", "关闭循环");
+  await loop.click();
+  await page.getByRole("menuitemradio", { name: "整课循环", exact: true }).click();
+  await expect(loop).toHaveAttribute("title", "整课循环");
+  await loop.click();
+  await page.getByRole("menuitemradio", { name: "选中内容循环", exact: true }).click();
+  await expect(loop).toHaveAttribute("title", "选中内容循环");
+  const speed = page.getByRole("combobox", { name: "精听倍速" });
+  await expect(speed.locator("svg")).toHaveCount(0);
+  await speed.click();
+  await page.getByRole("option", { name: "1.5×", exact: true }).click();
+  await expect(speed).toHaveText("1.5×");
+  await expect(page.locator("audio")).toHaveJSProperty("playbackRate", 1.5);
+});
+
+test("playback centers the highlighted sentence as it reaches each boundary", async ({
+  page,
+  isMobile,
+}) => {
+  await page.setViewportSize(
+    isMobile ? { width: 390, height: 844 } : { width: 1920, height: 1080 },
+  );
+  const notes = (prefix: string) =>
+    Array.from({ length: 18 }, (_, i) => ({
+      id: `${prefix}-${i}`,
+      note: `Reading note ${i + 1}`,
+      sentences: [],
+    }));
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        paragraphs: [
+          { id: "p1", sentences: [sentence("s1", 1)] },
+          ...notes("before"),
+          { id: "p2", sentences: [sentence("s2", 4)] },
+          ...notes("between"),
+          { id: "p3", sentences: [sentence("s3", 7)] },
+        ],
+      },
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  for (const [id, time] of [["s2", 4.05], ["s3", 7.05]] as const) {
+    await page.locator("audio").evaluate((audio: HTMLAudioElement, position) => {
+      audio.currentTime = position;
+    }, time);
+    const target = page.locator(`[id="reading-1:1-${id}"]`);
+    await expect(target).toHaveAttribute("aria-current", "true");
+    await expect(target).toHaveClass(/current-sentence/);
+    await expect
+      .poll(() => target.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2);
+      }))
+      .toBeLessThan(2);
+  }
+  await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+});
+
 test("inline markers and dragging synchronize passage anchors without starting audio", async ({
   page,
 }) => {

@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  ArrowRight,
   BookOpen,
   Check,
   CheckCircle2,
@@ -22,6 +23,7 @@ import {
   Pause,
   Play,
   Repeat,
+  Repeat1,
   Sparkles,
   RotateCcw,
   Volume2,
@@ -302,7 +304,7 @@ export function Textbooks({ pathname }: { pathname: string }) {
         (parts.length === 4 && parts[2] === "lessons" && validLesson)));
   if (!valid)
     return (
-      <main className="mx-auto max-w-7xl px-4 sm:px-8">
+      <main className="page-shell">
         <Loading
           error="没有找到这本教材或课文"
           retry={() => navigateBook("/books")}
@@ -310,7 +312,7 @@ export function Textbooks({ pathname }: { pathname: string }) {
       </main>
     );
   return (
-    <main className="page textbook-page mx-auto max-w-7xl px-4 pb-12 sm:px-8 lg:px-12">
+    <main className="page textbook-page page-shell pb-12">
       <nav
         aria-label="面包屑"
         className="breadcrumb my-6 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
@@ -510,7 +512,7 @@ function BookContents({ book }: { book: number }) {
           ))}
         </div>
       </div>
-      <div className="textbook-contents grid gap-3 md:grid-cols-2">
+      <div className="textbook-contents grid gap-3">
         {lessons.map((l) => {
           const saved = progress.lessons[`${book}:${l.lesson}`];
           return (
@@ -586,12 +588,80 @@ export function TextbookLesson({
   }, [value, embedded]);
   if (!value) return <Loading error={error} retry={retry} />;
   return (
-    <AIWorkspace key={`${book}:${lesson}:${value.revision}`} lesson={value}>
+    <AIWorkspace
+      key={`${book}:${lesson}:${value.revision}`}
+      lesson={value}
+      heading={<ReadingHeading lesson={value} embedded={embedded} />}
+    >
       {(explain) => (
         <ReadingRoom lesson={value} embedded={embedded} onExplain={explain} />
       )}
     </AIWorkspace>
   );
+}
+function ReadingHeading({
+  lesson,
+  embedded,
+}: {
+  lesson: TextLesson;
+  embedded: boolean;
+}) {
+  return (
+    <header className="reading-heading mb-7 flex flex-wrap items-start justify-between gap-5 pt-5 sm:pt-8">
+      <div className="space-y-3">
+        <Badge variant="secondary" className="font-normal">
+          {lesson.label} · 课文精听
+        </Badge>
+        <h1
+          className={cn(
+            "font-serif text-4xl leading-tight tracking-tight sm:text-5xl",
+            embedded && "sm:text-4xl",
+          )}
+        >
+          {lesson.titleEn}
+        </h1>
+        <p className="text-muted-foreground">{lesson.titleZh}</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <CompletionButton
+          lessonKey={`${lesson.book}:${lesson.lesson}`}
+          duration={lesson.duration}
+        />
+        {lesson.lectureLessonId && (
+          <a
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "sm" }),
+              "gap-1",
+            )}
+            href={`/learn/${lesson.lectureLessonId}`}
+          >
+            观看讲解
+            <ChevronRight className="size-4" />
+          </a>
+        )}
+        {embedded && (
+          <Link
+            to={`/books/${lesson.book}/lessons/${lesson.lesson}`}
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            打开课程
+            <BookOpen className="ml-1 size-4" />
+          </Link>
+        )}
+      </div>
+    </header>
+  );
+}
+function centerReadingAnchor(id: string) {
+  const target = document.getElementById(id);
+  if (!target?.getClientRects().length) return;
+  const rect = target.getBoundingClientRect();
+  window.scrollTo({
+    top: window.scrollY + rect.top + (rect.height - window.innerHeight) / 2,
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "instant"
+      : "smooth",
+  });
 }
 function ReadingRoom({
   lesson,
@@ -915,11 +985,9 @@ function ReadingRoom({
     // Tabs mounts the passage through Radix Presence. Wait for that layout
     // before locating an anchor when seeking from the vocabulary tab.
     const frame = requestAnimationFrame(() => {
-      document
-        .getElementById(
-          `reading-${key}-${anchor.mode === "paragraph" ? "paragraph-" : ""}${anchor.targetId}`,
-        )
-        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      centerReadingAnchor(
+        `reading-${key}-${anchor.mode === "paragraph" ? "paragraph-" : ""}${anchor.targetId}`,
+      );
     });
     return () => cancelAnimationFrame(frame);
   }, [anchor?.targetId, anchor?.mode, focusedMarker, follow, key, tab]);
@@ -1088,48 +1156,12 @@ function ReadingRoom({
           setError("音频暂时无法播放，点击重试。");
         }}
       />
-      <header className="reading-heading mb-7 flex flex-wrap items-start justify-between gap-5 pt-5 sm:pt-8">
-        <div className="space-y-3">
-          <Badge variant="secondary" className="font-normal">
-            {lesson.label} · 课文精听
-          </Badge>
-          <h1
-            className={cn(
-              "font-serif text-4xl leading-tight tracking-tight sm:text-5xl",
-              embedded && "sm:text-4xl",
-            )}
-          >
-            {lesson.titleEn}
-          </h1>
-          <p className="text-muted-foreground">{lesson.titleZh}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CompletionButton lessonKey={key} duration={lesson.duration} />
-          {lesson.lectureLessonId && (
-            <a
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "sm" }),
-                "gap-1",
-              )}
-              href={`/learn/${lesson.lectureLessonId}`}
-            >
-              观看讲解
-              <ChevronRight className="size-4" />
-            </a>
-          )}
-          {embedded && (
-            <Link
-              to={`/books/${lesson.book}/lessons/${lesson.lesson}`}
-              className={buttonVariants({ variant: "ghost", size: "sm" })}
-            >
-              打开课程
-              <BookOpen className="ml-1 size-4" />
-            </Link>
-          )}
-        </div>
-      </header>
-      <Tabs value={tab} onValueChange={setTab} className="gap-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <Tabs
+        value={tab}
+        onValueChange={setTab}
+        className="reading-tabs gap-5 rounded-2xl border bg-card py-6 shadow-sm"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-8">
           <TabsList aria-label="阅读内容" className="h-11">
             <TabsTrigger value="passage" className="min-w-24 gap-2">
               <BookOpen className="size-4" />
@@ -1158,7 +1190,7 @@ function ReadingRoom({
           )}
         </div>
         <TabsContent value="passage" className="reading-passage m-0">
-          <Card className="gap-5 shadow-sm">
+          <Card className="gap-5 border-0 bg-transparent py-0 shadow-none">
             <CardContent className="space-y-7 px-4 sm:px-8">
               <div className="reading-question flex gap-3 rounded-xl border border-primary/10 bg-secondary/50 p-4 text-primary sm:p-5">
                 <Headphones className="mt-1 size-5" />
@@ -1366,7 +1398,7 @@ function ReadingRoom({
           </Card>
         </TabsContent>
         <TabsContent value="vocabulary" className="reading-vocabulary m-0">
-          <Card className="shadow-sm">
+          <Card className="border-0 bg-transparent py-0 shadow-none">
             <CardContent>
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="font-medium">本课单词</h2>
@@ -1461,7 +1493,7 @@ function ReadingRoom({
               <Button
                 variant={loopMode !== "off" ? "secondary" : "ghost"}
                 size="sm"
-                className="size-9 shrink-0 gap-1 px-0 md:w-auto md:px-2"
+                className="size-9 shrink-0 px-0"
                 title={
                   loopMode === "lesson"
                     ? "整课循环"
@@ -1471,15 +1503,13 @@ function ReadingRoom({
                 }
                 aria-label="循环模式"
               >
-                <Repeat className="size-4" />
-                <span className="hidden text-xs md:inline">
-                  {loopMode === "lesson"
-                    ? "整课循环"
-                    : loopMode === "selection"
-                      ? "选中循环"
-                      : "循环"}
-                </span>
-                <ChevronDown className="hidden size-3 md:block" />
+                {loopMode === "lesson" ? (
+                  <Repeat className="size-4" />
+                ) : loopMode === "selection" ? (
+                  <Repeat1 className="size-4" />
+                ) : (
+                  <ArrowRight className="size-4 text-muted-foreground" />
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="top" align="end">
@@ -1524,7 +1554,8 @@ function ReadingRoom({
           >
             <SelectTrigger
               aria-label="精听倍速"
-              className="h-9 w-14 shrink-0 gap-0.5 border-0 bg-transparent px-1 text-xs shadow-none [&_svg]:size-3"
+              showIcon={false}
+              className="h-9 w-12 shrink-0 justify-center gap-0 border-0 bg-transparent px-1 text-xs tabular-nums shadow-none"
             >
               <SelectValue />
             </SelectTrigger>
@@ -1622,14 +1653,9 @@ function ReadingRoom({
                       close();
                       setTimeout(
                         () =>
-                          document
-                            .getElementById(
-                              `reading-${key}-${anchor?.mode === "paragraph" ? "paragraph-" : ""}${anchor?.targetId || currentRef.current}`,
-                            )
-                            ?.scrollIntoView({
-                              block: "center",
-                              behavior: "smooth",
-                            }),
+                          centerReadingAnchor(
+                            `reading-${key}-${anchor?.mode === "paragraph" ? "paragraph-" : ""}${anchor?.targetId || currentRef.current}`,
+                          ),
                         0,
                       );
                     }}

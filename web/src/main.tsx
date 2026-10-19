@@ -125,7 +125,7 @@ function BookIllustration() {
 function Header({ learning, home }: { learning: boolean; home: () => void }) {
   return (
     <header className="site-header border-b bg-card/80">
-      <div className="header-inner mx-auto flex min-h-20 max-w-7xl flex-wrap items-center gap-x-8 gap-y-3 px-4 py-4 sm:px-8 lg:px-12">
+      <div className="header-inner page-shell flex min-h-20 flex-wrap items-center gap-x-8 gap-y-3 py-4">
         <a
           className="brand flex items-center gap-2.5 font-serif text-2xl font-bold tracking-tight text-primary"
           href="/"
@@ -470,7 +470,7 @@ function Overview({
     ? Math.round((completed / course.lessons.length) * 100)
     : 0;
   return (
-    <main className="page overview mx-auto max-w-7xl px-4 sm:px-8 lg:px-12 pb-12">
+    <main className="page overview page-shell pb-12">
       <div className="page-kicker my-7 flex justify-between gap-3 text-[10px] tracking-wider text-muted-foreground [&>span:first-child]:flex [&>span:first-child]:items-center [&>span:first-child]:gap-2">
         <span>
           <span className="status-dot inline-block size-1.5 rounded-full bg-primary" />{" "}
@@ -782,7 +782,7 @@ function Classroom({
           ? "朗读视频处理失败，系统会自动重试。"
           : "朗读视频源暂时不可用，请稍后重试。";
   return (
-    <main className="page classroom mx-auto max-w-7xl px-4 sm:px-8 lg:px-12 pb-12">
+    <main className="page classroom page-shell pb-12">
       <div className="breadcrumb my-6 flex flex-wrap items-center gap-2 text-xs text-muted-foreground [&>button]:h-auto [&>button]:gap-1 [&>button]:px-0 [&>button]:text-xs">
         <Button variant="ghost" onClick={home}>
           <ArrowLeft size={15} />
@@ -1175,7 +1175,7 @@ function App() {
       <Header learning={Boolean(id)} home={() => navigate("")} />
       {storageError && (
         <div
-          className="notice mx-auto my-4 flex max-w-6xl flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary p-4 text-xs text-primary"
+          className="notice my-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary p-4 text-xs text-primary"
           role="status"
         >
           浏览器暂时无法保存进度；本次学习仍可正常进行。
@@ -1185,7 +1185,7 @@ function App() {
         !pathname.startsWith("/books") &&
         (failed || (course && !course.sourceAvailable && !course.indexing)) && (
           <div
-            className="notice mx-auto my-4 flex max-w-6xl flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary p-4 text-xs text-primary"
+            className="notice my-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary p-4 text-xs text-primary"
             role="alert"
           >
             <WifiOff size={17} />
@@ -1201,25 +1201,25 @@ function App() {
         )}
       {pathname === "/settings" ? (
         <React.Suspense
-          fallback={<main className="ai-page">正在打开系统配置…</main>}
+          fallback={<main className="ai-page page-shell">正在打开系统配置…</main>}
         >
           <AISettings />
         </React.Suspense>
       ) : pathname === "/learning-profile" ? (
         <React.Suspense
-          fallback={<main className="ai-page">正在打开学习档案…</main>}
+          fallback={<main className="ai-page page-shell">正在打开学习档案…</main>}
         >
           <LearnerProfile />
         </React.Suspense>
       ) : pathname.startsWith("/books") ? (
         <Textbooks pathname={pathname} />
       ) : loading ? (
-        <div className="page-state flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
+        <div className="page-state page-shell flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
           <LoaderCircle className="spin animate-spin" size={30} />
           <h1>正在打开你的课堂…</h1>
         </div>
       ) : !course ? (
-        <div className="page-state flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
+        <div className="page-state page-shell flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
           <BookOpen size={36} />
           <h1>课堂暂时无法加载</h1>
           <p>请稍后重试。</p>
@@ -1232,7 +1232,7 @@ function App() {
           </Button>
         </div>
       ) : id && !lesson ? (
-        <div className="page-state flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
+        <div className="page-state page-shell flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center text-muted-foreground [&_h1]:text-xl [&_p]:text-sm">
           <BookOpen size={36} />
           <h1>{course.indexing ? "正在整理这节课程…" : "没有找到这节课"}</h1>
           <p>你可以回到课程目录，重新选择一节课。</p>
@@ -1257,7 +1257,7 @@ function App() {
       ) : (
         <Overview course={course} progress={progress} select={navigate} />
       )}
-      <footer className="site-footer mx-auto mt-8 flex max-w-7xl flex-wrap items-center gap-4 border-t px-4 py-7 text-[11px] text-muted-foreground sm:px-8 lg:px-12 [&>span:nth-child(2)]:hidden sm:[&>span:nth-child(2)]:block">
+      <footer className="site-footer page-shell mt-8 flex flex-wrap items-center gap-4 border-t py-7 text-[11px] text-muted-foreground [&>span:nth-child(2)]:hidden sm:[&>span:nth-child(2)]:block">
         <a
           className="footer-brand flex items-center gap-2 font-serif text-lg font-semibold text-primary"
           href="/"

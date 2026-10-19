@@ -234,7 +234,7 @@ function SettingsForm({
     setForm((f) => ({ ...f, [group]: { ...f[group], [key]: value } }));
   return (
     <form
-      className="ai-form"
+      className="ai-form ai-settings-form"
       onSubmit={(event) => {
         event.preventDefault();
         setBusy(true);
@@ -403,7 +403,7 @@ function SettingsForm({
           </details>
         </section>
       ))}
-      <section className="ai-card" aria-label="AI 工具配置">
+      <section className="ai-card ai-tools-settings" aria-label="AI 工具配置">
         <h2>AI 工具</h2>
         <p>
           勾选允许 AI
@@ -469,7 +469,7 @@ function SettingsForm({
           关闭必要工具会暂停对应生成操作，重新启用后可继续。已有答案、反馈和历史结果仍会保留。
         </p>
       </section>
-      <section className="ai-card">
+      <section className="ai-card ai-prompts-settings">
         <h2>系统提示词</h2>
         <p>AI 按需通过已启用的工具读取材料，再依据实际获得的信息生成内容。</p>
         {(
@@ -531,7 +531,7 @@ export function AISettings() {
     tools: AIToolInfo[];
   }>("/api/settings/ai");
   return (
-    <main className="ai-page">
+    <main className="ai-page page-shell">
       <header className="ai-page-heading">
         <Settings size={24} />
         <div>
