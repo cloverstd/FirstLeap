@@ -1,0 +1,132 @@
+.vocabulary-entry {
+  min-width: 0;
+  padding: 1.5rem 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.vocabulary-entry.selected-vocabulary {
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--secondary) 50%, transparent);
+  padding-inline: 0.75rem;
+}
+.vocabulary-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.vocabulary-phonetics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin-top: 0.5rem;
+  font-family: "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+  font-size: 0.9375rem;
+}
+.vocabulary-phonetics small {
+  color: var(--muted-foreground);
+}
+.vocabulary-course-meaning {
+  margin: 0.875rem 0 1rem;
+  font-size: 0.875rem;
+  line-height: 1.75;
+}
+.vocabulary-course-meaning > span {
+  margin-right: 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+.vocabulary-senses {
+  display: grid;
+  gap: 1.25rem;
+}
+.vocabulary-sense {
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+}
+.vocabulary-sense-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.vocabulary-sense-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  color: var(--primary);
+  background: var(--secondary);
+  font-size: 0.75rem;
+}
+.vocabulary-example {
+  border-left: 2px solid var(--border);
+  padding-left: 0.875rem;
+}
+.vocabulary-example p[lang="en"] {
+  font-size: 0.9375rem;
+}
+.vocabulary-example p + p {
+  margin-top: 0.125rem;
+  font-size: 0.8125rem;
+}
+.vocabulary-forms {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  background: var(--muted);
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+}
+.vocabulary-forms > div + div {
+  margin-top: 1rem;
+}
+.vocabulary-form-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+.vocabulary-form-list dt {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  margin-bottom: 0.125rem;
+}
+.vocabulary-form-list dd {
+  font-size: 0.9375rem;
+}
+.vocabulary-extensions {
+  margin-top: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+}
+.vocabulary-extensions summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 500;
+  list-style: none;
+}
+.vocabulary-extensions summary::-webkit-details-marker {
+  display: none;
+}
+.vocabulary-extensions[open] summary svg {
+  transform: rotate(180deg);
+}
+.vocabulary-loading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.75;
+  color: var(--muted-foreground);
+}
+.vocabulary-loading p {
+  flex-basis: 100%;
+}

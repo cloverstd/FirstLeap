@@ -16,6 +16,12 @@ export const test = base.extend({
         json: { cached: false, result: null, history: [], jobId: "" },
       }),
     );
+    await page.route("**/vocabulary/*/details", (route) =>
+      route.fulfill({
+        status: 409,
+        json: { error: "请先在系统配置中设置文字模型，再补全单词词条" },
+      }),
+    );
     await use(page);
   },
 });

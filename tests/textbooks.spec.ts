@@ -55,6 +55,53 @@ const summary = {
   alignment: "ready",
   lectureLessonId: "lesson1",
 };
+
+const dictionaryDetails = {
+  phoneticUK: "/drɪŋk/",
+  phoneticUS: "/drɪŋk/",
+  senses: [
+    {
+      pos: "n.",
+      meaning: "一杯饮料",
+      explanation: "表示一杯或一份饮料时可数。",
+      countability: "countable",
+      plural: ["drinks"],
+      examples: [
+        { english: "Would you like a drink?", chinese: "你想喝一杯饮料吗？" },
+      ],
+    },
+    {
+      pos: "n.",
+      meaning: "酒",
+      explanation: "泛指酒时不可数。",
+      countability: "uncountable",
+      countableExpressions: [
+        { expression: "a glass of wine", meaning: "一杯葡萄酒" },
+      ],
+      examples: [{ english: "He gave up drink.", chinese: "他戒酒了。" }],
+    },
+    {
+      pos: "v.",
+      meaning: "喝；饮",
+      explanation: "表示喝下液体，过去式为 drank。",
+      examples: [
+        { english: "She drank some water.", chinese: "她喝了一些水。" },
+      ],
+    },
+  ],
+  verbs: [
+    {
+      base: "drink",
+      thirdPerson: ["drinks"],
+      presentParticiple: ["drinking"],
+      past: ["drank"],
+      pastParticiple: ["drunk"],
+      note: "不规则动词，注意区分过去式和过去分词。",
+    },
+  ],
+  extensions: [{ expression: "drink up", meaning: "喝完" }],
+  notes: "不要把动词变形 drunk 与过去式 drank 混淆。",
+};
 const book = {
   book: 1,
   name: "新概念英语 第一册 英语初阶",
@@ -1132,4 +1179,166 @@ test("dense inline boundaries open an exact selection on a narrow screen", async
     "true",
   );
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("word entries show IPA, each meaning and example, noun countability and irregular forms", async ({
+  page,
+}) => {
+  let generated = 0;
+  await page.route("**/vocabulary/*/details", (route) => {
+    generated++;
+    return route.fulfill({ json: { cached: true, result: dictionaryDetails } });
+  });
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        vocabulary: [
+          {
+            ...detail.vocabulary[0],
+            word: "drink",
+            pos: "n. & v.",
+            meaning: "喝",
+            details: dictionaryDetails,
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  const entry = page.getByRole("article", { name: "单词：drink", exact: true });
+  await expect(entry.getByLabel("国际音标")).toContainText("/drɪŋk/");
+  await expect(
+    entry
+      .getByRole("region", { name: "词义与例句" })
+      .locator(".vocabulary-sense"),
+  ).toHaveCount(3);
+  for (const text of [
+    "Would you like a drink?",
+    "你想喝一杯饮料吗？",
+    "He gave up drink.",
+    "他戒酒了。",
+    "She drank some water.",
+    "她喝了一些水。",
+    "可数名词 [C]",
+    "不可数名词 [U]",
+    "a glass of wine",
+  ]) {
+    await expect(entry.getByText(text, { exact: true })).toBeVisible();
+  }
+  const forms = entry.getByRole("region", { name: "动词变形" });
+  await expect(forms.getByText("drank", { exact: true })).toBeVisible();
+  await expect(forms.getByText("drunk", { exact: true })).toBeVisible();
+  await expect(forms.getByText("had drunk", { exact: true })).toBeVisible();
+  await expect(entry.getByText("drink up", { exact: true })).toBeVisible();
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  }
+  await entry.getByRole("button", { name: "生词发音：drink" }).click();
+  await expect(
+    page.getByRole("button", { name: "暂停精听", exact: true }),
+  ).toBeVisible();
+  expect(generated).toBe(0);
+});
+
+test("word details fill automatically and recover from failure without losing textbook gloss", async ({
+  page,
+}) => {
+  let attempts = 0;
+  await page.route("**/vocabulary/*/details", (route) => {
+    attempts++;
+    return attempts === 1
+      ? route.fulfill({ status: 503, json: { error: "词条服务暂时不可用" } })
+      : route.fulfill({ status: 202, json: { jobId: "word-job" } });
+  });
+  await page.route("**/api/ai/jobs/word-job/events", (route) =>
+    route.fulfill({
+      contentType: "text/event-stream",
+      body: `event: snapshot\ndata: ${JSON.stringify({ id: "word-job", status: "done", result: dictionaryDetails })}\n\n`,
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  expect(attempts).toBe(0);
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  const entry = page.getByRole("article", {
+    name: "单词：handbag",
+    exact: true,
+  });
+  await expect(
+    entry.getByText("词条服务暂时不可用", { exact: true }),
+  ).toBeVisible();
+  await expect(entry.locator(".vocabulary-course-meaning")).toContainText(
+    "手提包",
+  );
+  await entry.getByRole("button", { name: "重新加载词条" }).click();
+  await expect(entry.getByText("had drunk", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "课文", exact: true }).click();
+  await expect(
+    page
+      .getByRole("button", { name: "点读句子：Is this your handbag?" })
+      .first(),
+  ).toBeVisible();
+});
+
+test("modal verbs explain missing forms without inventing participles", async ({
+  page,
+}) => {
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        vocabulary: [
+          {
+            ...detail.vocabulary[0],
+            word: "must",
+            pos: "modal",
+            meaning: "必须",
+            details: {
+              phoneticUK: "/mʌst/",
+              phoneticUS: "/mʌst/",
+              senses: [
+                {
+                  pos: "modal",
+                  meaning: "必须",
+                  explanation: "后接动词原形。",
+                  examples: [
+                    { english: "You must go.", chinese: "你必须走。" },
+                  ],
+                },
+              ],
+              verbs: [
+                {
+                  base: "must",
+                  thirdPerson: null,
+                  presentParticiple: null,
+                  past: null,
+                  pastParticiple: null,
+                  note: "没有现在分词和过去分词，过去的义务可用 had to 表达。",
+                },
+              ],
+              extensions: [],
+              notes: "mustn't 表示禁止。",
+            },
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  const entry = page.getByRole("article", { name: "单词：must", exact: true });
+  await expect(
+    entry.getByText("没有现在分词和过去分词，过去的义务可用 had to 表达。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    entry.getByRole("region", { name: "动词变形" }).locator("dt"),
+  ).toHaveText(["原形"]);
 });
