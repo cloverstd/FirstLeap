@@ -289,9 +289,6 @@
   user-select: text;
   -webkit-user-select: text;
 }
-.ai-course-column .reading-vocabulary .grid {
-  grid-template-columns: 1fr;
-}
 .ai-panel {
   background: var(--card);
   border: 1px solid var(--border);

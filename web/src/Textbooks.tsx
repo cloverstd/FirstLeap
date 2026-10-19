@@ -1,6 +1,7 @@
 import { flushProgressSync } from "./progressSync";
 import { AIWorkspace } from "./AIWorkspace";
 import type { AITarget } from "./ai";
+import { VocabularyEntry, type TextVocabulary } from "./VocabularyEntry";
 import {
   useEffect,
   useMemo,
@@ -26,7 +27,6 @@ import {
   Repeat1,
   Sparkles,
   RotateCcw,
-  Volume2,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -106,14 +106,7 @@ export type TextLesson = {
     note?: string;
     sentences: TextSentence[];
   }[];
-  vocabulary: {
-    id: string;
-    word: string;
-    pos: string;
-    meaning: string;
-    pronunciationId: string;
-    ready: boolean;
-  }[];
+  vocabulary: TextVocabulary[];
   translation: string[];
   lectureLessonId?: string;
 };
@@ -1457,61 +1450,33 @@ function ReadingRoom({
                   美音 · 单词与短语
                 </span>
               </div>
-              <div className="grid gap-x-8 divide-y divide-border sm:grid-cols-2 sm:divide-y-0">
+              <p className="mb-2 text-xs leading-6 text-muted-foreground">
+                英美音标 · 多义解释与例句 · 词形与扩展用法
+              </p>
+              <div className="vocabulary-list">
                 {lesson.vocabulary.map((word) => (
-                  <div
-                    key={word.id}
-                    className={cn(
-                      "vocabulary-entry flex items-center justify-between gap-3 border-b border-border py-5",
-                      selected === word.id &&
-                        "selected-vocabulary rounded-lg bg-secondary/50 px-3",
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <strong className="font-serif text-2xl font-normal">
-                        {word.word}
-                      </strong>
-                      <small className="ml-3 text-xs text-muted-foreground">
-                        {word.pos}
-                      </small>
-                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                        {word.meaning}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-9 shrink-0"
-                      aria-label={`AI 详解单词：${word.word}`}
-                      onClick={() =>
-                        onExplain({
-                          kind: "vocabulary",
-                          id: word.id,
-                          text: word.word,
-                        })
-                      }
-                    >
-                      <Sparkles className="size-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="size-11 shrink-0 rounded-full text-primary"
-                      disabled={!word.ready}
-                      aria-label={`生词发音：${word.word}`}
-                      title={word.ready ? "播放美音词音" : "词音正在准备"}
-                      onClick={() =>
-                        start({
-                          url: `/api/pronunciations/${word.pronunciationId}`,
-                          kind: "vocabulary",
-                          offset: 0,
-                          id: word.id,
-                        })
-                      }
-                    >
-                      <Volume2 className="size-4" />
-                    </Button>
-                  </div>
+                  <VocabularyEntry
+                    key={`${lesson.book}:${lesson.lesson}:${word.id}`}
+                    word={word}
+                    book={lesson.book}
+                    lesson={lesson.lesson}
+                    selected={selected === word.id}
+                    explain={() =>
+                      onExplain({
+                        kind: "vocabulary",
+                        id: word.id,
+                        text: word.word,
+                      })
+                    }
+                    play={() =>
+                      start({
+                        url: `/api/pronunciations/${word.pronunciationId}`,
+                        kind: "vocabulary",
+                        offset: 0,
+                        id: word.id,
+                      })
+                    }
+                  />
                 ))}
               </div>
             </CardContent>
