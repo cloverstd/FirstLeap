@@ -241,7 +241,7 @@ python3 tools/align_textbook_translations.py --data data --model data/textbooks/
 
 ### 首次配置与使用
 
-1. 打开 `/settings`，为文字模型填写包含 API 前缀的 Base URL、API Key 和 Model，选择 Chat Completions 或 Responses。应用分别追加 `/chat/completions` 或 `/responses`。无需 Key 的本地服务可以留空。
+1. 打开 `/settings`，为文字模型填写包含 API 前缀的 Base URL 和 API Key，点击“获取模型列表”，再从服务商返回的模型中选择 Model。选择 Chat Completions 或 Responses，应用分别追加 `/chat/completions` 或 `/responses`。无需 Key 的本地服务可以留空。
 2. 按需独立配置生图服务并启用配图，接口为 `/images/generations`。两个模型的地址、Key 和 Model 完全独立。文字模型须支持所选协议的 function calling，模型通过 `generate_image` 工具自行决定是否配图。
 3. 打开 `/learning-profile` 填写目标、薄弱项和口语／写作自评，或开始 16 题动态测评。测评包含词汇、语法、阅读、听力各 4 题，AI 根据之前的回答调整后续题目。听力复用现有可播放课程原音，无需额外语音服务；播放失败可重试或跳过，不记为答错。未完成的能力维度保留原档案。
 4. 打开课程后，有缓存直接显示；首次整课详解需要点击生成。每句的 AI 按钮、生词 AI 按钮，以及划选后出现的 AI 按钮，会查询对应缓存，未命中时生成。单击单词仍然点读，划选不触发播放。
@@ -253,6 +253,8 @@ AI 每次新生成都会获取能力档案、目标、薄弱项、已学课程�
 ### 生成参数与缓存
 
 系统配置支持通用、整课、句段、单词、测评、能力评估和生图风格提示词，并可逐项恢复默认。默认流式显示、输出上限 8192 tokens、文字单次超时 120 秒、生图 180 秒、整项任务最长 10 分钟。Temperature 默认不发送；Chat Completions 可切换 `max_completion_tokens` / `max_tokens` 字段。生图默认尺寸为 `1024x1024`，质量留空使用服务商默认值，详解默认最多调用生图 2 次，可设置 0–6 次。
+
+文字与生图服务分别支持“获取模型列表”和“测试连接”，均使用当前表单配置，无需先保存。后端请求对应 Base URL 下的 `GET /models`（OpenAI 兼容的 `data[].id` 格式），复用相同地址已保存的 Key，返回模型列表、耗时和当前模型是否在列表中；不发起文字生成或生图，不验证推理、function calling 或生图能力。服务商须支持模型列表接口，并给 Key 相应的访问权限。模型不按名称推测类型过滤，按服务商能力选择文字或生图模型。修改地址或 Key 会清除旧列表；服务地址变化时需重新填写 Key，或显式清除旧 Key 后连接免 Key 服务，避免旧密钥被自动发送到其它地址。获取或测试不会保存草稿或改动已有配置。
 
 详解缓存按课程原文、所选词句、影响讲解的能力档案和初学／复习阶段区分。播放秒数变化、修改 Model、Key、提示词或参数不会使已有缓存自动失效。能力、目标、薄弱项或讲解方式变化后可生成新的个性化版本，并保留历史结果；图片按对应内容与提示词复用。
 
@@ -268,6 +270,6 @@ AI 每次新生成都会获取能力档案、目标、薄弱项、已学课程�
 
 备份与镜像更新时保留整个 `DATA_ROOT`，其中 AI 配置文件含密钥。现有 Compose 已挂载可写 `/data`，无需新增挂载、数据库或环境变量。清除浏览器数据不会删除已同步到服务端的记录，但尚未同步的离线操作需要先恢复连接。
 
-主要新增接口为 `/api/settings/ai`、`/api/learner/profile`、`/api/learner/progress`、`/api/learner/feedback`、`/api/assessments`、`/api/ai/explanations`、`/api/ai/jobs/{id}/events` 和 `/api/ai/images/{id}`。配置与学习数据沿用个人课堂的访问范围。
+主要新增接口为 `/api/settings/ai`、`POST /api/settings/ai/models`、`POST /api/settings/ai/test`、`/api/learner/profile`、`/api/learner/progress`、`/api/learner/feedback`、`/api/assessments`、`/api/ai/explanations`、`/api/ai/jobs/{id}/events` 和 `/api/ai/images/{id}`。配置与学习数据沿用个人课堂的访问范围。
 
 自动化测试使用本地模拟模型服务，并启动实际 Go 服务验证设置、配图、缓存、划选、动态测评和跨设备进度，不消耗真实模型额度。接入真实服务商后，可先在一个课程的整课与词句详解中验证其协议和工具调用支持。

@@ -244,6 +244,7 @@ func (s *aiService) settingsSnapshot() aiSettings {
 	return copyValue(s.settings)
 }
 func (s *aiService) settingsRoutes(mux *http.ServeMux) {
+	s.providerSettingsRoutes(mux)
 	mux.HandleFunc("GET /api/settings/ai", func(w http.ResponseWriter, r *http.Request) {
 		c := s.settingsSnapshot()
 		c.Text.KeySet = c.Text.APIKey != ""

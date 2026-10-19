@@ -1,13 +1,199 @@
 import {
   useState,
+  useEffect,
+  useRef,
   cloneElement,
   isValidElement,
   type ReactElement,
   type ReactNode,
 } from "react";
-import { Settings, Check, RotateCcw } from "lucide-react";
+import {
+  Settings,
+  Check,
+  RotateCcw,
+  RefreshCw,
+  PlugZap,
+  LoaderCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api, useAPI, type AISettings as SettingsData } from "./ai";
+import {
+  api,
+  useAPI,
+  type AISettings as SettingsData,
+  type ModelConfig,
+} from "./ai";
+
+type ProviderResult = {
+  models: string[];
+  message: string;
+  modelAvailable: boolean;
+};
+
+function ProviderConnection({
+  group,
+  value,
+  change,
+  disabled,
+}: {
+  group: "text" | "image";
+  value: ModelConfig;
+  change: (key: string, value: unknown) => void;
+  disabled: boolean;
+}) {
+  const label = group === "text" ? "文字" : "生图";
+  const [models, setModels] = useState<string[] | null>(null);
+  const [pending, setPending] = useState("");
+  const [notice, setNotice] = useState({ text: "", error: false });
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => {
+    request.current?.abort();
+    request.current = null;
+    setModels(null);
+    setPending("");
+    setNotice({ text: "", error: false });
+    return () => request.current?.abort();
+  }, [value.baseURL, value.apiKey, value.clearKey, value.keySet]);
+  useEffect(() => setNotice({ text: "", error: false }), [value.model]);
+  const check = async (action: "models" | "test") => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setPending(action);
+    setNotice({ text: "", error: false });
+    try {
+      const result = await api<ProviderResult>(`/api/settings/ai/${action}`, {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({
+          group,
+          config: {
+            baseURL: value.baseURL,
+            apiKey: value.apiKey || "",
+            clearKey: !!value.clearKey,
+            model: value.model,
+          },
+        }),
+      });
+      if (controller.signal.aborted) return;
+      setModels(result.models);
+      setNotice({ text: result.message, error: !result.modelAvailable });
+    } catch (error) {
+      if (!controller.signal.aborted)
+        setNotice({ text: (error as Error).message, error: true });
+    } finally {
+      if (request.current === controller) setPending("");
+    }
+  };
+  return (
+    <div className="ai-provider-connection">
+      <div className="ai-form-grid">
+        <Field
+          label={`${label} Base URL`}
+          hint="填写包含 API 前缀的地址，例如 https://example.com/v1"
+        >
+          <input
+            type="url"
+            value={value.baseURL}
+            onChange={(e) => change("baseURL", e.target.value)}
+            placeholder="https://example.com/v1"
+          />
+        </Field>
+        <Field
+          label={`${label} API Key`}
+          hint={
+            value.keySet
+              ? "已配置；留空保留现有 Key。"
+              : "支持无需 Key 的本地兼容服务。"
+          }
+        >
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={value.apiKey || ""}
+            onChange={(e) => change("apiKey", e.target.value)}
+            placeholder={value.keySet ? "已配置" : "填写 API Key"}
+          />
+        </Field>
+        <Field
+          label={`${label} Model`}
+          hint="填写地址与 Key 后，获取模型列表，再从服务商模型中选择。"
+        >
+          <select
+            value={value.model}
+            onChange={(e) => change("model", e.target.value)}
+            disabled={
+              disabled || !!pending || (!models?.length && !value.model)
+            }
+          >
+            <option value="" disabled>
+              {models ? "请选择服务商模型" : "请先获取模型列表"}
+            </option>
+            {value.model && !models?.includes(value.model) && (
+              <option value={value.model}>
+                {value.model}
+                {models ? "（本次列表未返回）" : "（当前配置）"}
+              </option>
+            )}
+            {models?.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <label className="ai-check">
+          <input
+            type="checkbox"
+            checked={!!value.clearKey}
+            onChange={(e) => change("clearKey", e.target.checked)}
+          />
+          清除已保存的 {label} Key
+        </label>
+      </div>
+      <div className="ai-provider-actions">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || !!pending || !value.baseURL.trim()}
+          aria-label={`获取${label}模型列表`}
+          onClick={() => void check("models")}
+        >
+          {pending === "models" ? (
+            <LoaderCircle className="animate-spin" />
+          ) : (
+            <RefreshCw />
+          )}
+          {pending === "models" ? "正在获取…" : "获取模型列表"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || !!pending || !value.baseURL.trim()}
+          aria-label={`测试${label}连接`}
+          onClick={() => void check("test")}
+        >
+          {pending === "test" ? (
+            <LoaderCircle className="animate-spin" />
+          ) : (
+            <PlugZap />
+          )}
+          {pending === "test" ? "正在测试…" : "测试连接"}
+        </Button>
+      </div>
+      <p className="ai-subtle ai-provider-hint">
+        使用当前填写的配置，无需先保存。测试连接检查地址、认证和模型列表，不生成内容。
+      </p>
+      {notice.text && (
+        <p
+          className={`ai-provider-status ${notice.error ? "ai-provider-error" : ""}`}
+          role={notice.error ? "alert" : "status"}
+        >
+          {notice.text}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function Field({
   label,
@@ -77,7 +263,11 @@ function SettingsForm({
       }}
     >
       {(["text", "image"] as const).map((group) => (
-        <section className="ai-card" key={group}>
+        <section
+          className="ai-card"
+          key={group}
+          aria-label={`${group === "text" ? "文字" : "生图"}模型配置`}
+        >
           <h2>{group === "text" ? "文字模型" : "生图模型"}</h2>
           {group === "image" && (
             <label className="ai-check">
@@ -89,50 +279,14 @@ function SettingsForm({
               允许 AI 在详解时按需生成配图
             </label>
           )}
-          <div className="ai-form-grid">
-            <Field
-              label={`${group === "text" ? "文字" : "生图"} Base URL`}
-              hint="填写包含 API 前缀的地址，例如 https://example.com/v1"
-            >
-              <input
-                type="url"
-                value={form[group].baseURL}
-                onChange={(e) => model(group, "baseURL", e.target.value)}
-                placeholder="https://example.com/v1"
-              />
-            </Field>
-            <Field label={`${group === "text" ? "文字" : "生图"} Model`}>
-              <input
-                value={form[group].model}
-                onChange={(e) => model(group, "model", e.target.value)}
-                placeholder="填写模型名称"
-              />
-            </Field>
-            <Field
-              label={`${group === "text" ? "文字" : "生图"} API Key`}
-              hint={
-                form[group].keySet
-                  ? "已配置；留空保留现有 Key。"
-                  : "支持无需 Key 的本地兼容服务。"
-              }
-            >
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={form[group].apiKey || ""}
-                onChange={(e) => model(group, "apiKey", e.target.value)}
-                placeholder={form[group].keySet ? "已配置" : "填写 API Key"}
-              />
-            </Field>
-            <label className="ai-check">
-              <input
-                type="checkbox"
-                checked={!!form[group].clearKey}
-                onChange={(e) => model(group, "clearKey", e.target.checked)}
-              />
-              清除已保存的 {group === "text" ? "文字" : "生图"} Key
-            </label>
-            {group === "text" && (
+          <ProviderConnection
+            group={group}
+            value={form[group]}
+            change={(key, value) => model(group, key, value)}
+            disabled={busy}
+          />
+          {group === "text" && (
+            <div className="ai-form-grid mt-5">
               <Field label="文字接口协议">
                 <select
                   value={form.text.protocol}
@@ -142,8 +296,8 @@ function SettingsForm({
                   <option value="responses">Responses</option>
                 </select>
               </Field>
-            )}
-          </div>
+            </div>
+          )}
           <details>
             <summary>生成参数</summary>
             <div className="ai-form-grid mt-5">

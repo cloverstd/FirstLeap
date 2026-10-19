@@ -22,8 +22,17 @@ let binaryRoot: string,
   provider: Server,
   origin: string,
   providerURL: string;
-let counters = { explanations: 0, images: 0, questions: 0, evaluations: 0 },
-  failText = false;
+let counters = {
+    explanations: 0,
+    images: 0,
+    questions: 0,
+    evaluations: 0,
+    models: 0,
+  },
+  failText = false,
+  failModels = false,
+  modelDelay = 0,
+  modelIDs = ["teaching", "illustration", "new-provider-model"];
 const png =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 async function listen(server: Server) {
@@ -44,9 +53,36 @@ test.beforeAll(() => {
 });
 test.afterAll(() => rmSync(binaryRoot, { recursive: true, force: true }));
 test.beforeEach(async ({ request }) => {
-  counters = { explanations: 0, images: 0, questions: 0, evaluations: 0 };
+  counters = {
+    explanations: 0,
+    images: 0,
+    questions: 0,
+    evaluations: 0,
+    models: 0,
+  };
   failText = false;
+  failModels = false;
+  modelDelay = 0;
+  modelIDs = ["teaching", "illustration", "new-provider-model"];
   provider = createServer(async (req, res) => {
+    if (req.url === "/v1/models" && req.method === "GET") {
+      counters.models++;
+      const ids = [...modelIDs];
+      if (modelDelay) await new Promise((done) => setTimeout(done, modelDelay));
+      res.setHeader("Content-Type", "application/json");
+      if (failModels) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: "image-private upstream details" }));
+      } else if (
+        !["Bearer private-key-never-expose", "Bearer image-private"].includes(
+          req.headers.authorization || "",
+        )
+      ) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: "private-key-never-expose" }));
+      } else res.end(JSON.stringify({ data: ids.map((id) => ({ id })) }));
+      return;
+    }
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString() || "{}");
@@ -366,17 +402,30 @@ test("settings save independent models and write-only keys", async ({
   await page
     .getByLabel("文字 Base URL", { exact: true })
     .fill(providerURL + "/v1");
-  await page.getByLabel("文字 Model", { exact: true }).fill("teaching");
   await page
     .getByLabel("文字 API Key", { exact: true })
     .fill("private-key-never-expose");
+  await page.getByRole("button", { name: "获取文字模型列表" }).click();
+  await page.getByLabel("文字 Model", { exact: true }).selectOption("teaching");
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(
+    page.getByRole("region", { name: "文字模型配置" }).getByRole("status"),
+  ).toContainText("连接成功");
   await page.getByLabel("文字接口协议").selectOption("responses");
   await page.getByLabel("允许 AI 在详解时按需生成配图").check();
   await page
     .getByLabel("生图 Base URL", { exact: true })
     .fill(providerURL + "/v1");
-  await page.getByLabel("生图 Model", { exact: true }).fill("illustration");
   await page.getByLabel("生图 API Key", { exact: true }).fill("image-private");
+  await page.getByRole("button", { name: "获取生图模型列表" }).click();
+  await page
+    .getByLabel("生图 Model", { exact: true })
+    .selectOption("illustration");
+  await page.getByRole("button", { name: "测试生图连接" }).click();
+  await expect(
+    page.getByRole("region", { name: "生图模型配置" }).getByRole("status"),
+  ).toContainText("连接成功");
+  expect(counters.explanations + counters.images).toBe(0);
   await page.getByRole("button", { name: "保存系统配置" }).click();
   await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
   await expect(page.getByLabel("文字 API Key", { exact: true })).toHaveValue(
@@ -395,6 +444,91 @@ test("settings save independent models and write-only keys", async ({
   await expect(
     page.getByLabel("文字 API Key", { exact: true }),
   ).toHaveAttribute("placeholder", "已配置");
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(
+    page.getByRole("region", { name: "文字模型配置" }).getByRole("status"),
+  ).toContainText("连接成功");
+  await page.getByRole("button", { name: "测试生图连接" }).click();
+  await expect(
+    page.getByRole("region", { name: "生图模型配置" }).getByRole("status"),
+  ).toContainText("连接成功");
+  await expect(page.getByLabel("文字 Model", { exact: true })).toHaveValue(
+    "teaching",
+  );
+  await expect(page.getByLabel("生图 Model", { exact: true })).toHaveValue(
+    "illustration",
+  );
+  expect(counters.explanations + counters.images).toBe(0);
+});
+
+test("provider connection errors and removed models can be corrected without saving a draft", async ({
+  page,
+  request,
+}) => {
+  await configure(request);
+  await page.goto(origin + "/settings");
+  const text = page.getByRole("region", { name: "文字模型配置" });
+  await page.getByLabel("文字 API Key", { exact: true }).fill("bad-key");
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(text.getByRole("alert")).toContainText("认证失败");
+  await expect(text).not.toContainText("private-key-never-expose");
+  await page.getByLabel("文字 API Key", { exact: true }).fill("");
+  failModels = true;
+  await page.getByRole("button", { name: "获取文字模型列表" }).click();
+  await expect(text.getByRole("alert")).toContainText("HTTP 503");
+  failModels = false;
+  modelIDs = ["new-provider-model", "illustration"];
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(text.getByRole("alert")).toContainText("当前模型未在列表中");
+  await page
+    .getByLabel("文字 Model", { exact: true })
+    .selectOption("new-provider-model");
+  await expect(text.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(text.getByRole("status")).toContainText("连接成功");
+  await expect(page.getByLabel("生图 Model", { exact: true })).toHaveValue(
+    "illustration",
+  );
+  const { settings } = await (
+    await request.get(origin + "/api/settings/ai")
+  ).json();
+  expect(settings.text.model).toBe("teaching");
+  expect(settings.text.keySet).toBe(true);
+  expect(counters.explanations + counters.images).toBe(0);
+});
+
+test("editing a provider cancels stale model lists and never forwards a saved key to a different address", async ({
+  page,
+  request,
+}) => {
+  await configure(request);
+  await page.goto(origin + "/settings");
+  modelDelay = 350;
+  await page.getByRole("button", { name: "获取文字模型列表" }).click();
+  await expect.poll(() => counters.models).toBe(1);
+  await page
+    .getByLabel("文字 Base URL", { exact: true })
+    .fill(providerURL + "/other");
+  await page.waitForTimeout(450);
+  const text = page.getByRole("region", { name: "文字模型配置" });
+  await expect(text.getByRole("status")).toHaveCount(0);
+  await expect(
+    page
+      .getByLabel("文字 Model", { exact: true })
+      .locator('option[value="new-provider-model"]'),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(text.getByRole("alert")).toContainText("服务地址已更改");
+  expect(counters.models).toBe(1);
+  await page
+    .getByLabel("文字 Base URL", { exact: true })
+    .fill(providerURL + "/v1");
+  modelDelay = 0;
+  await page.getByRole("button", { name: "获取文字模型列表" }).click();
+  await page
+    .getByLabel("文字 Model", { exact: true })
+    .selectOption("new-provider-model");
+  expect(counters.models).toBe(2);
 });
 test("manual personalized explanation calls image tools and reuses durable cache", async ({
   page,

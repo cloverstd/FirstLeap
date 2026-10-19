@@ -123,6 +123,28 @@
   color: var(--primary);
   line-height: 1.8;
 }
+.ai-provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+.ai-provider-hint {
+  margin-top: 12px;
+}
+.ai-provider-status {
+  margin-top: 12px;
+  color: var(--primary);
+  font-size: 12px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.ai-provider-error {
+  color: var(--destructive);
+}
+.ai-provider-connection select {
+  text-overflow: ellipsis;
+}
 .ai-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
