@@ -4,6 +4,7 @@ import {
   groupMarkers,
   markerAtPosition,
   markerLabel,
+  lessonAudioRange,
 } from "./textbookMarkers";
 const paragraphs = [
   {
@@ -20,22 +21,66 @@ const paragraphs = [
   { id: "p2", sentences: [{ id: "s3", text: "Goodbye", start: 8, end: 10 }] },
 ];
 describe("audio boundary markers", () => {
-  it("only includes sentence starts, including shared end/start times once", () => {
+  it("marks the first start and adds only the final sentence end", () => {
     const markers = buildMarkers(paragraphs, "sentence", 12);
     expect(markers.map((m) => [m.id, m.time])).toEqual([
       ["s1-start", 2],
       ["s2-start", 4],
       ["s3-start", 8],
+      ["s3-end", 10],
     ]);
-    expect(markers.every((m) => markerLabel(m).includes("起点"))).toBe(true);
+    expect(markers[0].boundary).toBe("start");
+    expect(markerLabel(markers[0])).toContain("课文开始");
+    expect(markers.at(-1)?.boundary).toBe("end");
+    expect(markerLabel(markers.at(-1)!)).toBe("课文结束 · 0:10");
   });
-  it("only includes paragraph starts from timed body sentences", () => {
+  it("keeps the same body boundaries when using paragraph starts", () => {
     expect(
       buildMarkers(paragraphs, "paragraph", 12).map((m) => [m.id, m.time]),
     ).toEqual([
       ["p1-start", 2],
       ["p2-start", 8],
+      ["p2-end", 10],
     ]);
+    expect(lessonAudioRange(paragraphs, 12)).toEqual({ start: 2, end: 10 });
+  });
+  it("rejects unusable timing without falling back to the intro and outro", () => {
+    const invalid = [
+      {
+        id: "p",
+        sentences: [
+          { id: "empty", text: "Note", start: null, end: null },
+          { id: "negative", text: "Invalid", start: -1, end: 1 },
+          { id: "reversed", text: "Invalid", start: 4, end: 3 },
+          { id: "long", text: "Invalid", start: 4, end: 20 },
+          { id: "nan", text: "Invalid", start: NaN, end: 5 },
+        ],
+      },
+    ];
+    expect(lessonAudioRange(invalid, 12)).toBeNull();
+    expect(buildMarkers(invalid, "sentence", 12)).toEqual([]);
+    expect(lessonAudioRange([...invalid, ...paragraphs], 12)).toEqual({
+      start: 2,
+      end: 10,
+    });
+    expect(lessonAudioRange([], 12)).toBeNull();
+  });
+  it("uses the latest valid end even with overlapping timing", () => {
+    const overlapping = [
+      {
+        id: "p",
+        sentences: [
+          { id: "s1", text: "Long", start: 2, end: 10 },
+          { id: "s2", text: "Short", start: 4, end: 6 },
+        ],
+      },
+    ];
+    expect(lessonAudioRange(overlapping, 12)).toEqual({ start: 2, end: 10 });
+    for (const mode of ["sentence", "paragraph"] as const) {
+      const markers = buildMarkers(overlapping, mode, 12);
+      expect(markers[0].time).toBe(2);
+      expect(markers.at(-1)?.time).toBe(10);
+    }
   });
   it("maps each boundary to the same content anchor and follows through gaps", () => {
     const markers = buildMarkers(paragraphs, "sentence", 12);

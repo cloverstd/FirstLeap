@@ -587,7 +587,7 @@ test("speed selection keeps its keyboard input separate from sentence navigation
     .toContain("/clips/s1");
 });
 
-test("whole lesson repeats naturally and manual completion survives playback saves", async ({
+test("whole lesson loops between body boundaries, skips intro and outro, and retains speed", async ({
   page,
 }) => {
   await page.goto("/books/1/lessons/1");
@@ -598,10 +598,25 @@ test("whole lesson repeats naturally and manual completion survives playback sav
   await page
     .getByRole("menuitemradio", { name: "整课循环", exact: true })
     .click();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 2);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await page.locator("audio").evaluate((audio) => {
+    audio.dataset.ends = "0";
+    audio.addEventListener("ended", () => {
+      audio.dataset.ends = String(Number(audio.dataset.ends) + 1);
+    });
+  });
   for (let i = 0; i < 2; i++) {
+    if (i === 1) {
+      await page
+        .getByRole("button", { name: "播放器设置", exact: true })
+        .click();
+      await page.getByRole("tab", { name: "段落起点", exact: true }).click();
+      await page.keyboard.press("Escape");
+    }
     await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
       audio.pause();
-      audio.currentTime = 9.3;
+      audio.currentTime = 6.4;
     });
     await page.getByRole("button", { name: "播放精听", exact: true }).click();
     await expect
@@ -611,6 +626,12 @@ test("whole lesson repeats naturally and manual completion survives playback sav
           .evaluate((audio: HTMLAudioElement) => audio.currentTime),
       )
       .toBeLessThan(3);
+    expect(
+      await page
+        .locator("audio")
+        .evaluate((audio: HTMLAudioElement) => audio.currentTime),
+    ).toBeGreaterThanOrEqual(2);
+    await expect(page.locator("audio")).toHaveAttribute("data-ends", "0");
     await expect(page.locator("audio")).toHaveJSProperty("paused", false);
     await expect(page.locator("audio")).toHaveJSProperty("playbackRate", 1.5);
     await expect(
@@ -637,6 +658,77 @@ test("whole lesson repeats naturally and manual completion survives playback sav
   await expect(
     page.getByRole("progressbar", { name: "第一册完成度", exact: true }),
   ).toHaveAttribute("aria-valuenow", "100");
+});
+
+test("body endpoint seeks while paused without completing or restarting the lesson", async ({
+  page,
+}) => {
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await expect(
+    page.getByRole("button", { name: /^跳到第 1 句起点.*课文开始/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^跳到课文结束/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "整课循环", exact: true })
+    .click();
+  await selectMarker(page, /^课文结束/);
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 6.8);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await expect(
+    page.getByRole("button", { name: "第一册第1课，标记已学", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await expect
+    .poll(() =>
+      page
+        .locator("audio")
+        .evaluate((audio: HTMLAudioElement) => audio.currentTime),
+    )
+    .toBeLessThan(3);
+  expect(
+    await page
+      .locator("audio")
+      .evaluate((audio: HTMLAudioElement) => audio.currentTime),
+  ).toBeGreaterThanOrEqual(2);
+  await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "关闭循环", exact: true })
+    .click();
+  await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
+    audio.currentTime = 9.5;
+  });
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await expect(page.locator("audio")).toHaveJSProperty("ended", true);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+});
+
+test("whole lesson looping is unavailable without usable body timing", async ({
+  page,
+}) => {
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        paragraphs: [
+          {
+            id: "p",
+            sentences: [{ ...sentence("s1", 2), start: null, end: null }],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await expect(
+    page.getByRole("menuitemradio", { name: "整课循环", exact: true }),
+  ).toBeDisabled();
 });
 
 test("sentence and paragraph starts seek without changing playback and preferences are per lesson", async ({
@@ -672,7 +764,7 @@ test("sentence and paragraph starts seek without changing playback and preferenc
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
   await page.getByRole("button", { name: "暂停精听", exact: true }).click();
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
-  await expect(page.getByRole("button", { name: /终点/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^课文结束/ })).toHaveCount(1);
   await page.getByRole("tab", { name: "段落起点", exact: true }).click();
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await seekToMarker(/^第 1 段起点/);
@@ -831,7 +923,9 @@ test("wide course panels align below the lesson heading and use the screen width
     expect(width - explanation!.x - explanation!.width).toBe(48);
     expect(header!.width).toBe(width);
     expect(
-      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
     ).toBe(true);
   }
   await page.setViewportSize({ width: 1920, height: 1080 });
@@ -839,10 +933,14 @@ test("wide course panels align below the lesson heading and use the screen width
   await expect(loop).toHaveText("");
   await expect(loop).toHaveAttribute("title", "关闭循环");
   await loop.click();
-  await page.getByRole("menuitemradio", { name: "整课循环", exact: true }).click();
+  await page
+    .getByRole("menuitemradio", { name: "整课循环", exact: true })
+    .click();
   await expect(loop).toHaveAttribute("title", "整课循环");
   await loop.click();
-  await page.getByRole("menuitemradio", { name: "选中内容循环", exact: true }).click();
+  await page
+    .getByRole("menuitemradio", { name: "选中内容循环", exact: true })
+    .click();
   await expect(loop).toHaveAttribute("title", "选中内容循环");
   const speed = page.getByRole("combobox", { name: "精听倍速" });
   await expect(speed.locator("svg")).toHaveCount(0);
@@ -882,18 +980,25 @@ test("playback centers the highlighted sentence as it reaches each boundary", as
   await page.goto("/books/1/lessons/1");
   await loaded(page);
   await page.getByRole("button", { name: "播放精听", exact: true }).click();
-  for (const [id, time] of [["s2", 4.05], ["s3", 7.05]] as const) {
-    await page.locator("audio").evaluate((audio: HTMLAudioElement, position) => {
-      audio.currentTime = position;
-    }, time);
+  for (const [id, time] of [
+    ["s2", 4.05],
+    ["s3", 7.05],
+  ] as const) {
+    await page
+      .locator("audio")
+      .evaluate((audio: HTMLAudioElement, position) => {
+        audio.currentTime = position;
+      }, time);
     const target = page.locator(`[id="reading-1:1-${id}"]`);
     await expect(target).toHaveAttribute("aria-current", "true");
     await expect(target).toHaveClass(/current-sentence/);
     await expect
-      .poll(() => target.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2);
-      }))
+      .poll(() =>
+        target.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2);
+        }),
+      )
       .toBeLessThan(2);
   }
   await page.getByRole("button", { name: "暂停精听", exact: true }).click();
@@ -977,7 +1082,7 @@ test("inline markers and dragging synchronize passage anchors without starting a
 
   await page.getByRole("button", { name: "播放器设置", exact: true }).click();
   await page.getByRole("tab", { name: "段落起点", exact: true }).click();
-  await expect(page.getByRole("button", { name: /终点/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^课文结束/ })).toHaveCount(1);
   await page.getByRole("button", { name: /^第 1 段起点/ }).click();
   await expect(page.locator('[id="reading-1:1-paragraph-p1"]')).toHaveAttribute(
     "aria-current",
@@ -1016,7 +1121,9 @@ test("dense inline boundaries open an exact selection on a narrow screen", async
     .getByRole("button", { name: "2 个音频断点", exact: true })
     .first()
     .click();
-  await expect(page.getByRole("button", { name: /终点/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /^跳到课文结束/ }),
+  ).toBeVisible();
   await page.getByRole("button", { name: /^第 2 句起点/ }).click();
   await expect(page.locator("audio")).toHaveJSProperty("currentTime", 3);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);

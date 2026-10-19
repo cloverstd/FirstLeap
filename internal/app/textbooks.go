@@ -20,6 +20,7 @@ type TextbookRef struct {
 	Book   int `json:"book"`
 	Lesson int `json:"lesson"`
 }
+
 type TextWord struct {
 	ID     string   `json:"id"`
 	Text   string   `json:"text"`
@@ -91,6 +92,15 @@ type clipJob struct {
 
 var pronunciationID = regexp.MustCompile(`^[a-f0-9]{24}$`)
 var bookNames = []string{"", "第一册_英语初阶", "第二册_实践与进步", "第三册_培养技能", "第四册_流利英语"}
+
+func textbookNumber(l Lesson) int {
+	m := lessonPattern.FindStringSubmatch(l.Label)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
+}
 
 func (a *App) libraryRoot() string { return filepath.Join(a.cfg.DataRoot, "textbooks", "library") }
 func bookNumber(r *http.Request) int {

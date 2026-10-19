@@ -115,6 +115,27 @@ func TestRangeAndHead(t *testing.T) {
 	}
 }
 
+func TestReadingVideoRemoved(t *testing.T) {
+	a, id, _ := testApp(t)
+	catalog := request(a, "GET", "/api/courses/ncese01", nil)
+	var course struct {
+		Lessons []map[string]json.RawMessage `json:"lessons"`
+	}
+	if err := json.Unmarshal(catalog.Body.Bytes(), &course); err != nil {
+		t.Fatal(err)
+	}
+	for _, lesson := range course.Lessons {
+		if _, ok := lesson["reading"]; ok {
+			t.Fatal("retired reading videos are still advertised")
+		}
+	}
+	for _, method := range []string{"GET", "HEAD"} {
+		if response := request(a, method, "/api/lessons/"+id+"/reading/video", nil); response.Code != http.StatusNotFound {
+			t.Fatalf("retired reading endpoint returned %d", response.Code)
+		}
+	}
+}
+
 func TestCatalogSecurityAndSourceRecovery(t *testing.T) {
 	a, id, _ := testApp(t)
 	outside := filepath.Join(t.TempDir(), "secret.mp4")

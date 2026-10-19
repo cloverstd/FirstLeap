@@ -68,6 +68,7 @@ import { TextbookTimeline, TextbookPlayerSettings } from "./TextbookTimeline";
 import {
   audioClock as clock,
   buildMarkers,
+  lessonAudioRange,
   markerAtPosition,
   type AudioMarker,
 } from "./textbookMarkers";
@@ -715,6 +716,10 @@ function ReadingRoom({
     () => buildMarkers(lesson.paragraphs, record.markerMode, lesson.duration),
     [lesson.paragraphs, record.markerMode, lesson.duration],
   );
+  const loopRange = useMemo(
+    () => lessonAudioRange(lesson.paragraphs, lesson.duration),
+    [lesson.paragraphs, lesson.duration],
+  );
   const anchor =
     focusedMarker &&
     !playing &&
@@ -782,11 +787,35 @@ function ReadingRoom({
     loopRef.current = mode;
     setLoopMode(mode);
     if (mode !== "selection" && repeatTimer.current !== null) stop();
+    const media = audio.current;
+    if (mode === "lesson" && loopRange && source.current.kind === "full") {
+      if (
+        fullPosition.current < loopRange.start ||
+        fullPosition.current >= loopRange.end
+      ) {
+        fullPosition.current = loopRange.start;
+        setPosition(loopRange.start);
+        if (media && media.readyState >= 1) media.currentTime = loopRange.start;
+        persist(true);
+      }
+    }
   };
   const play = () => {
     interacted.current = true;
     const media = audio.current;
     if (!media) return;
+    manualEnd.current = false;
+    if (
+      loopRef.current === "lesson" &&
+      loopRange &&
+      source.current.kind === "full" &&
+      (fullPosition.current < loopRange.start ||
+        fullPosition.current >= loopRange.end)
+    ) {
+      fullPosition.current = loopRange.start;
+      setPosition(loopRange.start);
+      if (media.readyState >= 1) media.currentTime = loopRange.start;
+    }
     playIntent.current = true;
     setRunning(true);
     claimMedia(media);
@@ -852,6 +881,16 @@ function ReadingRoom({
     media.preservesPitch = true;
     if (autoplay && !manualEnd.current) play();
   };
+  const repeatLesson = () => {
+    const media = audio.current;
+    if (!media || !loopRange) return;
+    save({ completed: true });
+    fullPosition.current = loopRange.start;
+    media.currentTime = loopRange.start;
+    setPosition(loopRange.start);
+    persist(true);
+    if (media.paused) play();
+  };
   const tick = () => {
     const media = audio.current;
     if (
@@ -861,6 +900,17 @@ function ReadingRoom({
       media.currentSrc !== new URL(source.current.url, location.href).href
     )
       return;
+    if (
+      source.current.kind === "full" &&
+      loopRef.current === "lesson" &&
+      loopRange &&
+      playIntent.current &&
+      !manualEnd.current &&
+      media.currentTime >= loopRange.end
+    ) {
+      repeatLesson();
+      return;
+    }
     setPosition(source.current.offset + media.currentTime);
     if (source.current.kind === "full") {
       fullPosition.current = media.currentTime;
@@ -1023,6 +1073,15 @@ function ReadingRoom({
   const onEnded = () => {
     const media = audio.current;
     if (!media?.ended || !playIntent.current) return;
+    if (
+      source.current.kind === "full" &&
+      loopRef.current === "lesson" &&
+      loopRange &&
+      !manualEnd.current
+    ) {
+      repeatLesson();
+      return;
+    }
     setPlaying(false);
     tick();
     if (manualEnd.current) {
@@ -1033,16 +1092,8 @@ function ReadingRoom({
       fullPosition.current = lesson.duration;
       save({ completed: true });
       persist(true);
-      if (loopRef.current === "lesson") {
-        fullPosition.current = 0;
-        media.currentTime = 0;
-        setPosition(0);
-        persist(true);
-        play();
-      } else {
-        playIntent.current = false;
-        setRunning(false);
-      }
+      playIntent.current = false;
+      setRunning(false);
       return;
     }
     if (loopRef.current !== "selection") {
@@ -1533,7 +1584,7 @@ function ReadingRoom({
                 <DropdownMenuRadioItem value="off">
                   关闭循环
                 </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="lesson">
+                <DropdownMenuRadioItem value="lesson" disabled={!loopRange}>
                   整课循环
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="selection">
@@ -1555,7 +1606,11 @@ function ReadingRoom({
             <SelectTrigger
               aria-label="精听倍速"
               showIcon={false}
-              className="h-9 w-12 shrink-0 justify-center gap-0 border-0 bg-transparent px-1 text-xs tabular-nums shadow-none"
+              title="精听倍速"
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "sm" }),
+                "h-9 w-12 shrink-0 justify-center gap-0 border-0 bg-transparent px-1 text-xs tabular-nums shadow-none",
+              )}
             >
               <SelectValue />
             </SelectTrigger>

@@ -18,7 +18,6 @@ type Patch = {
 const KEYS = {
   text: "firstleap.textbook.progress.v1",
   lecture: "firstleap.progress.v1",
-  reading: "firstleap.reading.progress.v1",
 };
 const META = "firstleap.sync.v1",
   QUEUE = "firstleap.sync.outbox.v1";

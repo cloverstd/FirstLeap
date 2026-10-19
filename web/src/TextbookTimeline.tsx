@@ -15,6 +15,7 @@ import {
   type AudioMarker,
 } from "./textbookMarkers";
 import type { MarkerMode } from "./textbookProgress";
+import { cn } from "@/lib/utils";
 
 function MarkerList({
   markers,
@@ -36,7 +37,21 @@ function MarkerList({
           className="h-auto min-h-11 w-full flex-col items-start gap-1 px-2 py-2 text-left"
           onClick={() => select(marker)}
         >
-          <span className="text-xs font-medium">{markerLabel(marker)}</span>
+          <span className="flex items-center gap-2 text-xs font-medium">
+            {markerLabel(marker)}
+            {marker.boundary && (
+              <span
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-[10px]",
+                  marker.boundary === "start"
+                    ? "bg-primary/10 text-primary"
+                    : "bg-amber-100 text-amber-800",
+                )}
+              >
+                {marker.boundary === "start" ? "开始" : "结束"}
+              </span>
+            )}
+          </span>
           <span className="line-clamp-2 whitespace-normal text-xs font-normal text-muted-foreground">
             {marker.text}
           </span>
@@ -60,6 +75,8 @@ export function TextbookPlayerSettings({
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const start = markers.find((marker) => marker.boundary === "start");
+  const end = markers.find((marker) => marker.boundary === "end");
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -83,6 +100,12 @@ export function TextbookPlayerSettings({
           <p className="text-xs font-semibold text-muted-foreground">
             断点设置
           </p>
+          {start && end && (
+            <p className="text-xs text-muted-foreground">
+              整课循环范围：{audioClock(start.time)}–{audioClock(end.time)}
+              ，跳过前奏与片尾。
+            </p>
+          )}
           <Tabs value={mode} onValueChange={(v) => changeMode(v as MarkerMode)}>
             <TabsList className="w-full">
               <TabsTrigger value="sentence" className="flex-1 text-xs">
@@ -127,7 +150,13 @@ function MarkerCluster({
           onPointerDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
-          <span className="h-1.5 w-2 rounded-sm bg-card ring-1 ring-primary/60" />
+          {markers.some((marker) => marker.boundary === "start") ? (
+            <span className="rounded-sm bg-primary px-0.5 text-[10px] leading-4 font-semibold text-primary-foreground">
+              始
+            </span>
+          ) : (
+            <span className="h-1.5 w-2 rounded-sm bg-card ring-1 ring-primary/60" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -194,35 +223,58 @@ export function TextbookTimeline({
           className="h-11"
         >
           <div className="pointer-events-none absolute inset-x-2 top-1/2 h-1.5 -translate-y-1/2">
-            {groupMarkers(markers, Math.max(1, width - 16), duration).map(
-              (group) => {
-                const first = group[0];
-                const style = {
-                  left: `${Math.max(0, Math.min(100, (first.time / (duration || 1)) * 100))}%`,
-                };
-                return group.length > 1 ? (
-                  <MarkerCluster
-                    key={first.id}
-                    markers={group}
-                    style={style}
-                    seekMarker={seekMarker}
-                  />
-                ) : (
-                  <button
-                    key={first.id}
-                    className="pointer-events-auto absolute top-1/2 flex h-6 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded hover:bg-primary/15 focus-visible:bg-primary/15"
-                    style={style}
-                    aria-label={`跳到${markerLabel(first)}`}
-                    title={`${markerLabel(first)} · ${first.text}`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onKeyDown={(event) => event.stopPropagation()}
-                    onClick={() => seekMarker(first)}
-                  >
+            {[
+              ...groupMarkers(
+                markers.filter((marker) => marker.boundary !== "end"),
+                Math.max(1, width - 16),
+                duration,
+              ),
+              ...markers
+                .filter((marker) => marker.boundary === "end")
+                .map((marker) => [marker]),
+            ].map((group) => {
+              const first = group[0];
+              const style = {
+                left: `${Math.max(0, Math.min(100, (first.time / (duration || 1)) * 100))}%`,
+              };
+              return group.length > 1 ? (
+                <MarkerCluster
+                  key={first.id}
+                  markers={group}
+                  style={style}
+                  seekMarker={seekMarker}
+                />
+              ) : (
+                <button
+                  key={first.id}
+                  className={cn(
+                    "pointer-events-auto absolute top-1/2 flex h-6 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded hover:bg-primary/15 focus-visible:bg-primary/15",
+                    first.boundary && "z-10",
+                  )}
+                  style={style}
+                  aria-label={`跳到${markerLabel(first)}`}
+                  title={`${markerLabel(first)} · ${first.text}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  onClick={() => seekMarker(first)}
+                >
+                  {first.boundary ? (
+                    <span
+                      className={cn(
+                        "rounded-sm px-0.5 text-[10px] leading-4 font-semibold",
+                        first.boundary === "start"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-amber-700 text-white",
+                      )}
+                    >
+                      {first.boundary === "start" ? "始" : "终"}
+                    </span>
+                  ) : (
                     <span className="h-1.5 w-0.5 bg-card ring-1 ring-primary/60" />
-                  </button>
-                );
-              },
-            )}
+                  )}
+                </button>
+              );
+            })}
           </div>
         </Slider>
       </div>

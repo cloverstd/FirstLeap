@@ -216,9 +216,6 @@ func (s *aiService) learningProgressLocked() map[string]any {
 	for id, e := range s.app.entries {
 		n := textbookNumber(e.Lesson)
 		refs[id] = map[string]any{"book": 1, "lesson": n, "label": e.Label, "title": e.Title}
-		if n > 0 {
-			refs[fmt.Sprintf("nce1-reading-%03d", n)] = refs[id]
-		}
 	}
 	s.app.mu.RUnlock()
 	describe := func(track, id string) any {
@@ -238,6 +235,9 @@ func (s *aiService) learningProgressLocked() map[string]any {
 		return id
 	}
 	for track, rows := range s.state.Progress.Tracks {
+		if track == "reading" {
+			continue // Legacy reading-video progress is retained only for compatibility.
+		}
 		ids := []string{}
 		for id, row := range rows {
 			if row.Values["completed"] == true {
@@ -290,7 +290,7 @@ func (s *aiService) explainContext(req explainRequest, l TextLesson, cfg aiSetti
 				}
 			}
 		case "mode":
-			if v == "text" || v == "lecture" || v == "reading" {
+			if v == "text" || v == "lecture" {
 				ctx.Current[k] = v
 			}
 		}

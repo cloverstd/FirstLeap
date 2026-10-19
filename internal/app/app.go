@@ -23,8 +23,8 @@ import (
 )
 
 type Config struct {
-	MediaRoot, ReadingRoot, TextbookRoot, DataRoot, WebRoot string
-	RequireCIFS                                             bool
+	MediaRoot, TextbookRoot, DataRoot, WebRoot string
+	RequireCIFS                                bool
 }
 type Lesson struct {
 	ID        string       `json:"id"`
@@ -33,7 +33,6 @@ type Lesson struct {
 	Title     string       `json:"title"`
 	Duration  float64      `json:"duration"`
 	Thumbnail bool         `json:"thumbnail"`
-	Reading   *Reading     `json:"reading,omitempty"`
 	Textbook  *TextbookRef `json:"textbook,omitempty"`
 }
 type entry struct {
@@ -59,8 +58,6 @@ type App struct {
 	entries             map[string]entry
 	available, indexing bool
 	scanMu              sync.Mutex
-	readings            map[int]readingEntry
-	readingsAvailable   bool
 	clipMu              sync.Mutex
 	clipJobs            map[string]*clipJob
 	clipSlots           chan struct{}
@@ -96,10 +93,7 @@ func New(cfg Config) (*App, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.DataRoot, "thumbnails"), 0750); err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, entries: make(map[string]entry), readings: make(map[int]readingEntry), indexing: true, clipJobs: make(map[string]*clipJob), clipSlots: make(chan struct{}, 2)}
-	if data, err := os.ReadFile(filepath.Join(cfg.DataRoot, "readings", "catalog.json")); err == nil {
-		_ = json.Unmarshal(data, &a.readings)
-	}
+	a := &App{cfg: cfg, entries: make(map[string]entry), indexing: true, clipJobs: make(map[string]*clipJob), clipSlots: make(chan struct{}, 2)}
 	if data, err := os.ReadFile(filepath.Join(cfg.DataRoot, "catalog.json")); err == nil {
 		_ = json.Unmarshal(data, &a.entries)
 	}
@@ -146,7 +140,6 @@ func readOnlySMB(stat *syscall.Statfs_t) bool {
 }
 
 func (a *App) Run(ctx context.Context) {
-	go a.runReadings(ctx)
 	a.scan(ctx)
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -266,7 +259,11 @@ func (a *App) scan(ctx context.Context) {
 
 // OpenRoot restricts resolution to the configured media tree even if a path is replaced by a symlink.
 func (a *App) openMedia(relative string) (*os.File, error) {
-	root, err := os.OpenRoot(a.cfg.MediaRoot)
+	return openAt(a.cfg.MediaRoot, relative)
+}
+
+func openAt(rootPath, relative string) (*os.File, error) {
+	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +316,6 @@ func (a *App) course() Course {
 	c := Course{ID: "ncese01", Title: "新概念英语第一册", Teacher: "霍娜", Description: "从第一句问候开始，建立扎实的英语基础。跟随霍娜老师，在熟悉的生活情境中，循序渐进地学习词汇、语法与表达。", Lessons: []Lesson{}, SourceAvailable: a.available, Indexing: a.indexing}
 	for _, e := range a.entries {
 		lesson := e.Lesson
-		lesson.Reading = a.readingFor(lesson)
 		if n := textbookNumber(lesson); n > 0 && n <= 143 && n%2 == 1 && a.cfg.TextbookRoot != "" {
 			lesson.Textbook = &TextbookRef{Book: 1, Lesson: n}
 		}
@@ -349,7 +345,6 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	a.ai.routes(mux)
 	a.textbookRoutes(mux)
-	mux.HandleFunc("GET /api/lessons/{id}/reading/video", a.readingVideo)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, map[string]bool{"ok": true}) })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		if !a.mediaOK() || len(a.course().Lessons) == 0 {

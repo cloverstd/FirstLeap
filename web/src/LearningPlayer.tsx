@@ -11,7 +11,7 @@ import {
   MoreHorizontal,
   Pause,
   Play,
-  Repeat1,
+  RectangleHorizontal,
   RotateCcw,
   RotateCw,
   Volume2,
@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { claimMedia, MEDIA_EVENT } from "./mediaCoordinator";
 
-// FirstLeap owns resume, completion and retry policy for both media types.
+// FirstLeap owns resume, completion and retry policy.
 Artplayer.LOG_VERSION = false;
 Artplayer.CONTEXTMENU = false;
 Artplayer.RECONNECT_TIME_MAX = 0;
@@ -45,7 +45,6 @@ type Props = {
   source: string;
   poster?: string;
   title: string;
-  reading: boolean;
   progressID: string;
   progress?: LessonProgress;
   update: (
@@ -55,8 +54,6 @@ type Props = {
   ) => void;
   autoplay: boolean;
   onEnded: () => void;
-  loopReading: boolean;
-  onLoopChange: (enabled: boolean) => void;
   continuous: boolean;
   onContinuousChange: (enabled: boolean) => void;
 };
@@ -256,11 +253,7 @@ export function LearningPlayer(props: Props) {
         true,
       );
       if (pausedEndSeek.current) return;
-      if (current.reading && current.loopReading) {
-        video.currentTime = 0;
-        persist(true);
-        play();
-      } else current.onEnded();
+      current.onEnded();
     });
     const visibility = () => {
       if (document.visibilityState === "hidden") persist(true);
@@ -290,8 +283,7 @@ export function LearningPlayer(props: Props) {
       const tracks = (
         event as CustomEvent<Record<string, Record<string, LessonProgress>>>
       ).detail;
-      const record =
-        tracks[props.reading ? "reading" : "lecture"]?.[props.progressID];
+      const record = tracks.lecture?.[props.progressID];
       if (!record || typeof record.position !== "number") return;
       saved.current = record;
       const video = player.current?.video;
@@ -305,7 +297,7 @@ export function LearningPlayer(props: Props) {
     };
     window.addEventListener("remote-progress-applied", restore);
     return () => window.removeEventListener("remote-progress-applied", restore);
-  }, [props.progressID, props.reading]);
+  }, [props.progressID]);
   useEffect(() => {
     const changed = () =>
       setNativeFullscreen(document.fullscreenElement === shell.current);
@@ -337,8 +329,6 @@ export function LearningPlayer(props: Props) {
   const toggleFullscreen = async () => {
     if (document.fullscreenElement === shell.current) {
       await document.exitFullscreen();
-    } else if (webFullscreen) {
-      setWebFullscreen(false);
     } else {
       try {
         if (!shell.current?.requestFullscreen)
@@ -348,6 +338,12 @@ export function LearningPlayer(props: Props) {
         setWebFullscreen(true);
       }
     }
+  };
+  const toggleWebFullscreen = async () => {
+    if (document.fullscreenElement === shell.current) {
+      await document.exitFullscreen();
+    }
+    setWebFullscreen((value) => !value);
   };
   const keyboard = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -371,7 +367,7 @@ export function LearningPlayer(props: Props) {
       seekTo(event.key === "Home" ? 0 : duration);
     }
   };
-  const extraOffsets = props.reading ? [10] : [10, 15, 30];
+  const extraOffsets = [10, 15, 30];
   const darkButton =
     "min-h-11 gap-1.5 text-white/80 hover:bg-white/10 hover:text-white";
   return (
@@ -379,7 +375,7 @@ export function LearningPlayer(props: Props) {
       ref={shell}
       className={cn(
         "learning-player relative min-w-0 overflow-visible rounded-2xl border border-primary/20 bg-[#15271f] text-white shadow-sm isolate",
-        props.reading ? "is-reading" : "is-lecture",
+        "is-lecture",
         fullscreen &&
           "is-fullscreen flex h-full w-full flex-col rounded-none border-0",
         webFullscreen && "web-fullscreen fixed inset-0 z-[10000] h-dvh",
@@ -396,7 +392,7 @@ export function LearningPlayer(props: Props) {
         className={cn(
           "player-stage relative w-full overflow-hidden bg-[#101a14]",
           replayBlocked ? "rounded-t-2xl" : "rounded-2xl",
-          props.reading ? "aspect-[4/3]" : "aspect-video",
+          "aspect-video",
           error && "min-h-80",
           fullscreen && "min-h-0 flex-1 rounded-none aspect-auto",
         )}
@@ -563,25 +559,6 @@ export function LearningPlayer(props: Props) {
               </DropdownMenu>
             </div>
             <div className="media-toggles flex shrink-0 items-center">
-              {props.reading && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn(
-                    darkButton,
-                    "media-toggle min-w-11 shrink-0 px-2 text-xs",
-                    props.loopReading && "bg-white/10 text-[#bce6c5]",
-                  )}
-                  role="switch"
-                  aria-label="循环当前视频"
-                  title="循环当前视频"
-                  aria-checked={props.loopReading}
-                  onClick={() => props.onLoopChange(!props.loopReading)}
-                >
-                  <Repeat1 className="size-4" />
-                  <span className="media-toggle-label">循环当前视频</span>
-                </Button>
-              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -627,7 +604,8 @@ export function LearningPlayer(props: Props) {
                   value={String(rate)}
                   onValueChange={(value) => {
                     const speed = Number(value);
-                    if (player.current) player.current.video.playbackRate = speed;
+                    if (player.current)
+                      player.current.video.playbackRate = speed;
                     setRate(speed);
                   }}
                 >
@@ -681,12 +659,27 @@ export function LearningPlayer(props: Props) {
               size="icon"
               className={cn(
                 darkButton,
+                "media-web-fullscreen media-icon size-11 shrink-0",
+              )}
+              aria-label={webFullscreen ? "退出网页全屏" : "网页全屏"}
+              title={webFullscreen ? "退出网页全屏（Esc）" : "网页全屏"}
+              aria-pressed={webFullscreen}
+              onClick={() => void toggleWebFullscreen()}
+            >
+              <RectangleHorizontal className="size-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                darkButton,
                 "media-fullscreen media-icon size-11 shrink-0",
               )}
-              aria-label={fullscreen ? "退出全屏" : "全屏"}
+              aria-label={nativeFullscreen ? "退出全屏" : "全屏"}
+              title={nativeFullscreen ? "退出全屏" : "全屏"}
               onClick={() => void toggleFullscreen()}
             >
-              {fullscreen ? (
+              {nativeFullscreen ? (
                 <Minimize className="size-5" />
               ) : (
                 <Maximize className="size-5" />
@@ -700,11 +693,7 @@ export function LearningPlayer(props: Props) {
           className="player-notice flex flex-wrap items-center justify-between gap-2 rounded-b-2xl border-t border-white/10 bg-[#20382b] px-3 py-2 text-xs text-[#bce6c5]"
           role="status"
         >
-          <span>
-            {props.reading && props.loopReading
-              ? "已回到开头，点击播放即可继续循环。"
-              : "点击播放即可继续观看。"}
-          </span>
+          <span>点击播放即可继续观看。</span>
           <Button
             variant="ghost"
             size="sm"

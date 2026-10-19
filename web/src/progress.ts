@@ -64,7 +64,6 @@ export function resumePosition(
     : Math.max(0, Math.min(progress.position, duration));
 }
 
-export const READING_STORAGE_KEY = "firstleap.reading.progress.v1";
 export function loadProgress(key = STORAGE_KEY): Progress {
   try {
     return parseProgress(localStorage.getItem(key));
@@ -77,7 +76,6 @@ export function saveProgress(progress: Progress, key = STORAGE_KEY): boolean {
   try {
     const previous = parseProgress(localStorage.getItem(key));
     localStorage.setItem(key, JSON.stringify(progress));
-    const track = key === READING_STORAGE_KEY ? "reading" : "lecture";
     for (const [id, record] of Object.entries(progress.lessons)) {
       const old = previous.lessons[id];
       const changed = Object.fromEntries(
@@ -87,10 +85,12 @@ export function saveProgress(progress: Progress, key = STORAGE_KEY): boolean {
             value !== old?.[field as keyof LessonProgress],
         ),
       );
-      queueProgressPatch(track, id, changed);
+      queueProgressPatch("lecture", id, changed);
     }
     if (progress.lastLesson !== previous.lastLesson)
-      queueProgressPatch(track, "@last", { lastLesson: progress.lastLesson });
+      queueProgressPatch("lecture", "@last", {
+        lastLesson: progress.lastLesson,
+      });
     return true;
   } catch {
     return false;

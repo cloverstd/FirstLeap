@@ -21,7 +21,7 @@ type aiToolInfo struct {
 
 var aiToolCatalog = []aiToolInfo{
 	{"get_learner_profile", "学习档案", "读取总体水平、六项能力、学习目标、薄弱项和讲解风格。只依据实际返回的档案调整难度。", []string{"explanation", "assessment", "evaluation"}, []string{}},
-	{"get_learning_progress", "已学课程与进度", "读取课文、讲解、朗读各自的已完成课程、数量及最近课程。学过不代表掌握。", []string{"explanation", "assessment", "evaluation"}, []string{}},
+	{"get_learning_progress", "已学课程与进度", "读取课文与讲解各自的已完成课程、数量及最近课程。学过不代表掌握。", []string{"explanation", "assessment", "evaluation"}, []string{}},
 	{"get_current_learning_state", "当前学习状态", "读取当前课程的保存进度、当前播放位置、所在句、学习模式和初学或复习状态。", []string{"explanation"}, []string{}},
 	{"get_current_lesson", "当前课文", "读取当前课程的标题和完整英文课文。整课详解必须先读取；解释词句时可按需读取语境。", []string{"explanation"}, []string{"整课详解"}},
 	{"get_assessment_context", "测评上下文", "读取本次测评的当前维度、历史作答和可用听力原音材料。生成新题前必须读取，依据真实回答调整题目。", []string{"assessment"}, []string{"动态测评出题"}},

@@ -13,7 +13,6 @@ const lesson = {
   title: "播放器测试课程",
   duration: 12,
   thumbnail: false,
-  reading: { id: "nce1-reading-001", number: 1, duration: 12, status: "ready" },
 };
 test.beforeAll(() => {
   temp = mkdtempSync(join(tmpdir(), "firstleap-player-"));
@@ -101,7 +100,7 @@ async function pausedSeek(page: Page, time: number) {
   await page.waitForFunction(() => !document.querySelector("video")!.seeking);
 }
 
-test("decoded media resumes, repeats naturally and retains the playback rate", async ({
+test("decoded lecture resumes, finishes naturally and retains the playback rate", async ({
   page,
   isMobile,
 }) => {
@@ -140,27 +139,15 @@ test("decoded media resumes, repeats naturally and retains the playback rate", a
       page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime),
     )
     .toBe(6);
-  await page.getByRole("button", { name: "美音朗读", exact: true }).click();
-  await loaded(page);
-  await page.getByRole("switch", { name: "循环当前视频" }).click();
   await page.getByRole("button", { name: "播放速度", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "2×", exact: true }).click();
-  for (let i = 0; i < 2; i++) {
-    await pausedSeek(page, 11);
-    // The real ended event, not a synthetic dispatch, must restart the video.
-    await page.getByRole("button", { name: "播放", exact: true }).click();
-    await expect
-      .poll(() =>
-        page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime),
-      )
-      .toBeLessThan(3);
-    expect(
-      await page
-        .locator("video")
-        .evaluate((v: HTMLVideoElement) => [v.paused, v.playbackRate]),
-    ).toEqual([false, 2]);
-    await page.locator("video").evaluate((v: HTMLVideoElement) => v.pause());
-  }
+  await page.getByRole("region", { name: "课程播放器" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("video")).toHaveJSProperty("currentTime", 11);
+  await page.waitForFunction(() => !document.querySelector("video")!.seeking);
+  await page.getByRole("button", { name: "播放", exact: true }).click();
+  await expect(page.locator("video")).toHaveJSProperty("ended", true);
+  await expect(page.locator("video")).toHaveJSProperty("playbackRate", 2);
   await expect(page.locator(".complete-button")).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -168,7 +155,7 @@ test("decoded media resumes, repeats naturally and retains the playback rate", a
   expect(errors).toEqual([]);
 });
 
-test("player keyboard scope, instance cleanup and retry preserve independent progress", async ({
+test("player keyboard scope, instance cleanup and retry preserve lecture progress", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -192,16 +179,21 @@ test("player keyboard scope, instance cleanup and retry preserve independent pro
       .evaluate((v: HTMLVideoElement) => v.currentTime),
   ).toBe(6);
   for (let i = 0; i < 3; i++) {
-    await page.getByRole("button", { name: "美音朗读", exact: true }).click();
+    await page.getByRole("button", { name: "我的课堂", exact: true }).click();
+    await expect(page.locator("video")).toHaveCount(0);
+    await page.getByRole("button", { name: "继续我的学习" }).click();
     await loaded(page);
-    await pausedSeek(page, 3);
-    await page.getByRole("button", { name: "课程讲解", exact: true }).click();
-    await loaded(page);
-    expect(
-      await page
-        .locator("video")
-        .evaluate((v: HTMLVideoElement) => v.currentTime),
-    ).toBe(6);
+    const resumed = await page
+      .locator("video")
+      .evaluate((video: HTMLVideoElement) => {
+        video.pause();
+        const time = video.currentTime;
+        video.currentTime = 6;
+        return time;
+      });
+    expect(resumed).toBeGreaterThanOrEqual(6);
+    expect(resumed).toBeLessThan(7);
+    await page.waitForFunction(() => !document.querySelector("video")!.seeking);
     await expect(page.locator(".art-video-player")).toHaveCount(1);
   }
   await page
@@ -215,22 +207,23 @@ test("player keyboard scope, instance cleanup and retry preserve independent pro
   await expect(
     page.getByRole("button", { name: "快进 5 秒", exact: true }),
   ).toBeEnabled();
-  expect(
-    await page
-      .locator("video")
-      .evaluate((v: HTMLVideoElement) => v.currentTime),
-  ).toBe(6);
+  const position = await page
+    .locator("video")
+    .evaluate((video: HTMLVideoElement) => {
+      video.pause();
+      return video.currentTime;
+    });
+  expect(position).toBeCloseTo(6, 0);
   await page.getByRole("button", { name: "我的课堂", exact: true }).click();
   await expect(page.locator("video")).toHaveCount(0);
   expect(
-    await page.evaluate(() => ({
-      lecture: JSON.parse(localStorage.getItem("firstleap.progress.v1")!)
-        .lessons["player-test"].position,
-      reading: JSON.parse(
-        localStorage.getItem("firstleap.reading.progress.v1")!,
-      ).lessons["nce1-reading-001"].position,
-    })),
-  ).toEqual({ lecture: 6, reading: 3 });
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("firstleap.progress.v1")!).lessons[
+          "player-test"
+        ].position,
+    ),
+  ).toBeCloseTo(6, 0);
   expect(errors).toEqual([]);
 });
 
@@ -291,7 +284,7 @@ test("small screens and fullscreen retain every learning control", async ({
     page.getByRole("menuitem", { name: "快进 30 秒", exact: true }),
   ).toBeInViewport();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "退出全屏", exact: true }).click();
+  await page.getByRole("button", { name: "退出网页全屏", exact: true }).click();
   await expect(
     page.getByRole("region", { name: "课程播放器" }),
   ).not.toHaveClass(/is-fullscreen/);
@@ -325,4 +318,56 @@ test("fullscreen keeps jump and speed menus inside the active player", async ({
   await expect(
     page.getByRole("region", { name: "课程播放器" }),
   ).not.toHaveClass(/is-fullscreen/);
+});
+
+test("webpage fullscreen fills the viewport, keeps menus usable and restores the page", async ({
+  page,
+}) => {
+  await page.goto("/learn/player-test");
+  await loaded(page);
+  await page.evaluate(() => {
+    document.body.style.overflow = "clip";
+    Element.prototype.requestFullscreen = () => {
+      throw new Error("Webpage fullscreen must not request browser fullscreen");
+    };
+  });
+  const player = page.getByRole("region", { name: "课程播放器" });
+  await page.getByRole("button", { name: "网页全屏", exact: true }).click();
+  await expect(player).toHaveClass(/web-fullscreen/);
+  expect(await page.evaluate(() => document.fullscreenElement)).toBeNull();
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    const bounds = await player.boundingBox();
+    expect(bounds).toEqual({ x: 0, y: 0, width, height: 844 });
+    const web = await page
+      .getByRole("button", { name: "退出网页全屏", exact: true })
+      .boundingBox();
+    const native = await page
+      .getByRole("button", { name: "全屏", exact: true })
+      .boundingBox();
+    expect(native!.x).toBeGreaterThanOrEqual(web!.x + web!.width);
+    expect(native!.x + native!.width).toBeLessThanOrEqual(width);
+  }
+  await page.getByRole("button", { name: "播放速度", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "1.5×", exact: true }).click();
+  await expect(page.locator("video")).toHaveJSProperty("playbackRate", 1.5);
+  await page.getByRole("button", { name: "更多跳转", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(player).toHaveClass(/web-fullscreen/);
+  await page.keyboard.press("Escape");
+  await expect(player).not.toHaveClass(/is-fullscreen/);
+  await expect(page.locator("body")).toHaveCSS("overflow", "clip");
+  await page.getByRole("button", { name: "网页全屏", exact: true }).click();
+  await page.getByRole("button", { name: "退出网页全屏", exact: true }).click();
+  await expect(player).not.toHaveClass(/is-fullscreen/);
+  await expect(page.locator("body")).toHaveCSS("overflow", "clip");
+  await page.getByRole("button", { name: "网页全屏", exact: true }).click();
+  await page.evaluate(() => {
+    history.pushState({}, "", "/");
+    dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(page.locator("video")).toHaveCount(0);
+  await expect(page.locator("body")).toHaveCSS("overflow", "clip");
 });

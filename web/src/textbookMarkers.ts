@@ -13,20 +13,40 @@ export type AudioMarker = {
   index: number;
   text: string;
   mode: MarkerMode;
+  boundary?: "start" | "end";
 };
-export function buildMarkers(
-  paragraphs: TimedParagraph[],
-  mode: MarkerMode,
-  duration: number,
-): AudioMarker[] {
-  const valid = (s: TimedSentence) =>
+function validSentence(s: TimedSentence, duration: number) {
+  return (
     s.start !== null &&
     s.end !== null &&
     Number.isFinite(s.start) &&
     Number.isFinite(s.end) &&
     s.start >= 0 &&
     s.end > s.start &&
-    s.end <= duration;
+    s.end <= duration
+  );
+}
+
+export function lessonAudioRange(
+  paragraphs: TimedParagraph[],
+  duration: number,
+) {
+  const sentences = paragraphs
+    .flatMap((p) => p.sentences)
+    .filter((s) => validSentence(s, duration));
+  if (!sentences.length) return null;
+  return {
+    start: Math.min(...sentences.map((s) => s.start!)),
+    end: Math.max(...sentences.map((s) => s.end!)),
+  };
+}
+
+export function buildMarkers(
+  paragraphs: TimedParagraph[],
+  mode: MarkerMode,
+  duration: number,
+): AudioMarker[] {
+  const valid = (s: TimedSentence) => validSentence(s, duration);
   const items =
     mode === "sentence"
       ? paragraphs.flatMap((p) => p.sentences).filter(valid)
@@ -37,13 +57,13 @@ export function buildMarkers(
                 {
                   id: p.id,
                   text: sentences.map((s) => s.text).join(" "),
-                  start: sentences[0].start,
-                  end: sentences[sentences.length - 1].end,
+                  start: Math.min(...sentences.map((s) => s.start!)),
+                  end: Math.max(...sentences.map((s) => s.end!)),
                 },
               ]
             : [];
         });
-  return items
+  const markers: AudioMarker[] = items
     .map((item, index) => ({
       id: `${item.id}-start`,
       time: item.start!,
@@ -53,6 +73,19 @@ export function buildMarkers(
       mode,
     }))
     .sort((a, b) => a.time - b.time);
+  if (!markers.length) return markers;
+  markers[0].boundary = "start";
+  const last = items.reduce((a, b) => (a.end! > b.end! ? a : b));
+  markers.push({
+    id: `${last.id}-end`,
+    time: last.end!,
+    targetId: last.id,
+    index: markers.find((marker) => marker.targetId === last.id)!.index,
+    text: last.text,
+    mode,
+    boundary: "end",
+  });
+  return markers;
 }
 export function groupMarkers(
   markers: AudioMarker[],
@@ -74,7 +107,9 @@ export function groupMarkers(
 export const audioClock = (seconds: number) =>
   `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds) % 60)).padStart(2, "0")}`;
 export const markerLabel = (m: AudioMarker) =>
-  `第 ${m.index} ${m.mode === "sentence" ? "句" : "段"}起点 · ${audioClock(m.time)}`;
+  m.boundary === "end"
+    ? `课文结束 · ${audioClock(m.time)}`
+    : `第 ${m.index} ${m.mode === "sentence" ? "句" : "段"}起点 · ${audioClock(m.time)}${m.boundary === "start" ? " · 课文开始" : ""}`;
 
 // Keep the preceding anchor until the next sentence or paragraph starts.
 export function markerAtPosition(markers: AudioMarker[], position: number) {

@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import {
   loadProgress,
-  READING_STORAGE_KEY,
   saveProgress,
   type LessonProgress,
   type Progress,
@@ -56,12 +55,6 @@ type Lesson = {
   duration: number;
   thumbnail: boolean;
   textbook?: { book: number; lesson: number };
-  reading?: {
-    id: string;
-    number: number;
-    duration: number;
-    status: "ready" | "processing" | "missing" | "error" | "unavailable";
-  };
 };
 type Course = {
   id: string;
@@ -690,22 +683,6 @@ function Classroom({
   autoplay: boolean;
 }) {
   const [continuous, setContinuous] = useState(false);
-  const [loopReading, setLoopReading] = useState(() => {
-    try {
-      return localStorage.getItem("firstleap.reading.loop.v1") === "true";
-    } catch {
-      return false;
-    }
-  });
-  const changeLoop = (enabled: boolean) => {
-    setLoopReading(enabled);
-    if (enabled) setContinuous(false);
-    try {
-      localStorage.setItem("firstleap.reading.loop.v1", String(enabled));
-    } catch {
-      /* Preference remains usable for this session. */
-    }
-  };
   const index = course.lessons.findIndex((l) => l.id === lesson.id);
   const [mode, setMode] = useState(() => {
     try {
@@ -714,73 +691,14 @@ function Classroom({
         localStorage.getItem("firstleap.player-mode.v1") === "text"
       )
         return "text";
-      return localStorage.getItem("firstleap.player-mode.v1") === "reading"
-        ? "reading"
-        : "lecture";
+      return "lecture";
     } catch {
       return "lecture";
     }
   });
-  const [readingProgress, setReadingProgress] = useState(() =>
-    loadProgress(READING_STORAGE_KEY),
-  );
-  const [readingStorageError, setReadingStorageError] = useState(false);
-  const readingProgressRef = useRef(readingProgress);
-  readingProgressRef.current = readingProgress;
-  useEffect(() => {
-    const listener = (e: StorageEvent) => {
-      if (e.key === READING_STORAGE_KEY)
-        setReadingProgress(loadProgress(READING_STORAGE_KEY));
-    };
-    window.addEventListener("storage", listener);
-    return () => window.removeEventListener("storage", listener);
-  }, []);
-  const updateReading: UpdateProgress = useCallback(
-    (id, patch, markLast = false) => {
-      const previous = readingProgressRef.current;
-      const next: Progress = {
-        ...previous,
-        lastLesson: markLast ? id : previous.lastLesson,
-        lessons: {
-          ...previous.lessons,
-          [id]: {
-            ...(previous.lessons[id] ?? {
-              position: 0,
-              duration: 0,
-              completed: false,
-            }),
-            ...patch,
-            updatedAt: Date.now(),
-          },
-        },
-      };
-      if (!saveProgress(next, READING_STORAGE_KEY))
-        queueMicrotask(() => setReadingStorageError(true));
-      readingProgressRef.current = next;
-      setReadingProgress(next);
-    },
-    [],
-  );
-  const isReading = mode === "reading" && Boolean(lesson.reading);
   const isText = mode === "text" && Boolean(lesson.textbook);
-  useEffect(() => {
-    if (isReading && loopReading) setContinuous(false);
-  }, [isReading, loopReading]);
-  const activeID = isReading ? lesson.reading!.id : lesson.id;
-  const activeProgress = isReading
-    ? readingProgress.lessons[activeID]
-    : progress.lessons[activeID];
-  const activeUpdate = isReading ? updateReading : update;
+  const activeProgress = progress.lessons[lesson.id];
   const completed = activeProgress?.completed;
-  const readingReady = lesson.reading?.status === "ready";
-  const readingMessage =
-    lesson.reading?.status === "missing"
-      ? `Lesson ${lesson.reading.number} 朗读视频尚未添加`
-      : lesson.reading?.status === "processing"
-        ? "朗读视频正在准备，请稍候…"
-        : lesson.reading?.status === "error"
-          ? "朗读视频处理失败，系统会自动重试。"
-          : "朗读视频源暂时不可用，请稍后重试。";
   return (
     <main className="page classroom page-shell pb-12">
       <div className="breadcrumb my-6 flex flex-wrap items-center gap-2 text-xs text-muted-foreground [&>button]:h-auto [&>button]:gap-1 [&>button]:px-0 [&>button]:text-xs">
@@ -800,7 +718,7 @@ function Classroom({
         )}
       >
         <section className="watch-column min-w-0">
-          {(lesson.reading || lesson.textbook) && (
+          {lesson.textbook && (
             <div
               className="player-modes mb-4 flex flex-wrap items-center gap-1 rounded-xl border bg-card p-1.5 [&>button]:px-3 [&>button]:text-xs [&>span]:ml-auto [&>span]:hidden [&>span]:px-2 [&>span]:text-[10px] [&>span]:text-muted-foreground sm:[&>span]:block"
               role="group"
@@ -810,9 +728,9 @@ function Classroom({
                 variant="ghost"
                 className={cn(
                   "min-h-10",
-                  !isReading && !isText && "selected bg-secondary text-primary",
+                  !isText && "selected bg-secondary text-primary",
                 )}
-                aria-pressed={!isReading && !isText}
+                aria-pressed={!isText}
                 onClick={() => {
                   setMode("lecture");
                   try {
@@ -824,29 +742,6 @@ function Classroom({
               >
                 课程讲解
               </Button>
-              {lesson.reading && (
-                <Button
-                  variant="ghost"
-                  className={cn(
-                    "min-h-10",
-                    isReading && "selected bg-secondary text-primary",
-                  )}
-                  aria-pressed={isReading}
-                  onClick={() => {
-                    setMode("reading");
-                    try {
-                      localStorage.setItem(
-                        "firstleap.player-mode.v1",
-                        "reading",
-                      );
-                    } catch {
-                      /* Playback remains available. */
-                    }
-                  }}
-                >
-                  美音朗读
-                </Button>
-              )}
               {lesson.textbook && (
                 <Button
                   variant="ghost"
@@ -867,9 +762,6 @@ function Classroom({
                   课文精听
                 </Button>
               )}
-              {lesson.reading && (
-                <span>Lesson {lesson.reading.number} 课文朗读</span>
-              )}
             </div>
           )}
           {isText && lesson.textbook ? (
@@ -879,64 +771,27 @@ function Classroom({
               lesson={lesson.textbook.lesson}
               embedded
             />
-          ) : isReading && !readingReady ? (
-            <div
-              className="reading-placeholder flex min-h-72 flex-col items-center justify-center gap-4 rounded-2xl border bg-card text-muted-foreground"
-              role="status"
-            >
-              <BookOpen size={30} />
-              <p>{readingMessage}</p>
-              <Button
-                variant="ghost"
-                className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
-                onClick={() => {
-                  setMode("lecture");
-                  try {
-                    localStorage.setItem("firstleap.player-mode.v1", "lecture");
-                  } catch {
-                    /* Optional preference. */
-                  }
-                }}
-              >
-                观看课程讲解
-              </Button>
-            </div>
           ) : (
             <LearningPlayer
-              key={`${lesson.id}:${isReading ? "reading" : "lecture"}`}
-              reading={isReading}
-              loopReading={isReading && loopReading}
-              onLoopChange={changeLoop}
-              progressID={activeID}
-              source={`/api/lessons/${lesson.id}/${isReading ? "reading/" : ""}video`}
+              key={lesson.id}
+              progressID={lesson.id}
+              source={`/api/lessons/${lesson.id}/video`}
               poster={
-                !isReading && lesson.thumbnail
+                lesson.thumbnail
                   ? `/api/lessons/${lesson.id}/thumbnail`
                   : undefined
               }
-              title={
-                isReading
-                  ? `Lesson ${lesson.reading?.number} 美音朗读`
-                  : lesson.title
-              }
+              title={lesson.title}
               continuous={continuous}
-              onContinuousChange={(enabled) => {
-                setContinuous(enabled);
-                if (isReading && enabled) changeLoop(false);
-              }}
+              onContinuousChange={setContinuous}
               progress={activeProgress}
-              update={activeUpdate}
+              update={update}
               autoplay={autoplay}
               onEnded={() => {
                 if (continuous && course.lessons[index + 1])
                   select(course.lessons[index + 1].id);
               }}
             />
-          )}
-          {readingStorageError && (
-            <p role="alert">
-              浏览器无法保存朗读进度，请检查存储空间或隐私设置。
-            </p>
           )}
           {!isText && (
             <div className="watch-heading my-7 flex flex-wrap items-start justify-between gap-4 [&_h1]:mt-2 [&_h1]:text-2xl [&_h1]:font-medium [&_p]:mt-3 [&_p]:flex [&_p]:items-center [&_p]:text-xs [&_p]:text-muted-foreground">
@@ -946,26 +801,14 @@ function Classroom({
                 </span>
                 <h1>{lesson.title}</h1>
                 <p>
-                  {isReading ? (
-                    `Lesson ${lesson.reading!.number} · 美音朗读`
-                  ) : (
-                    <>
-                      <span className="teacher-avatar mr-2 grid size-6 place-items-center rounded-full bg-secondary text-[10px] text-primary">
-                        霍
-                      </span>
-                      霍娜老师
-                      <span className="dot-separator mx-2 text-border">·</span>
-                      新东方
-                    </>
-                  )}
+                  <span className="teacher-avatar mr-2 grid size-6 place-items-center rounded-full bg-secondary text-[10px] text-primary">
+                    霍
+                  </span>
+                  霍娜老师
                   <span className="dot-separator mx-2 text-border">·</span>
-                  {isReading
-                    ? lesson.reading!.duration
-                      ? time(lesson.reading!.duration)
-                      : "课文视频"
-                    : lesson.duration
-                      ? time(lesson.duration)
-                      : "课程视频"}
+                  新东方
+                  <span className="dot-separator mx-2 text-border">·</span>
+                  {lesson.duration ? time(lesson.duration) : "课程视频"}
                 </p>
               </div>
               <Button
@@ -976,10 +819,9 @@ function Classroom({
                     ? "is-complete bg-secondary text-primary"
                     : "bg-card",
                 )}
-                disabled={isReading && !readingReady}
                 aria-pressed={Boolean(completed)}
                 onClick={() =>
-                  activeUpdate(activeID, {
+                  update(lesson.id, {
                     completed: !completed,
                     position: activeProgress?.position || 0,
                   })
@@ -1201,13 +1043,17 @@ function App() {
         )}
       {pathname === "/settings" ? (
         <React.Suspense
-          fallback={<main className="ai-page page-shell">正在打开系统配置…</main>}
+          fallback={
+            <main className="ai-page page-shell">正在打开系统配置…</main>
+          }
         >
           <AISettings />
         </React.Suspense>
       ) : pathname === "/learning-profile" ? (
         <React.Suspense
-          fallback={<main className="ai-page page-shell">正在打开学习档案…</main>}
+          fallback={
+            <main className="ai-page page-shell">正在打开学习档案…</main>
+          }
         >
           <LearnerProfile />
         </React.Suspense>
