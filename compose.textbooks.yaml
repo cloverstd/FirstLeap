@@ -1,0 +1,11 @@
+services:
+  firstleap:
+    environment:
+      TEXTBOOK_ROOT: /textbooks
+    volumes:
+      - type: bind
+        source: ${FIRSTLEAP_TEXTBOOK_PATH:?Set FIRSTLEAP_TEXTBOOK_PATH to the textbook resource directory}
+        target: /textbooks
+        read_only: true
+        bind:
+          create_host_path: false

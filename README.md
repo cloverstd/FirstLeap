@@ -1,6 +1,6 @@
 # FirstLeap
 
-一个安静、专注的个人英语课堂。首版包含新概念英语第一册课程目录、视频播放、搜索、倍速、浏览器续播和完成进度。
+一个安静、专注的个人英语课堂。支持新概念英语第一册讲解／朗读视频，以及四册电子书、原音逐句逐词点读、循环精听、生词美音和同步高亮。
 
 React + TypeScript + Vite 前端，Go HTTP 服务，单一 Docker 镜像。Go 直接流式读取只读媒体目录，支持 Range、HEAD、条件请求；原始 H.264/AAC MP4 不转码。`ffprobe` 和 `ffmpeg` 用于元数据、缩略图与朗读视频兼容副本；讲解原视频不转码。无账号、无数据库，学习进度保存在当前浏览器；清除站点数据会清除进度。
 
@@ -36,6 +36,7 @@ pnpm test:e2e
 | `BIND_ADDRESS` | `0.0.0.0` | 监听地址；临时预览可限定为 `127.0.0.1` |
 | `MEDIA_ROOT` | `/media` | 课程目录，只读 |
 | `DATA_ROOT` | `/data` | 元数据与缩略图缓存，可写 |
+| `TEXTBOOK_ROOT` | 未设置 | 原始教材 JSON、音频和电子书目录，只读；准备结果在 `DATA_ROOT/textbooks` |
 | `WEB_ROOT` | `web/dist` | 静态页面目录，镜像中为 `/app/web` |
 | `REQUIRE_CIFS` | `false` | 生产设为 `true`，拒绝普通目录和可写 CIFS 挂载 |
 
@@ -114,3 +115,86 @@ docker compose logs --tail=50
 讲解视频提供 −30、−15、−10、−5、+5、+10、+15、+30 秒跳转，朗读提供 −10、−5、+5、+10 秒跳转。按钮在视频元数据就绪后可用，跳转不越过起止边界，并立即保存位置；暂停时操作保持暂停。手机端讲解按钮按快退、快进分成两行。
 
 朗读的“循环当前视频”默认关闭，偏好保存在 `firstleap.reading.loop.v1`。播放结束后保留完成状态，从头按当前倍速继续；与连续播放互斥。切换到讲解时不应用循环，返回朗读时恢复偏好。浏览器阻止自动重播时可手动继续播放。
+
+## 四册电子书与课文精听
+
+“电子书”入口独立于视频目录。四册分别为 72、96、60、48 个学习单元；第一册按 Lesson 1 & 2 等组合展示，使用奇数课号作为标识。每课含课文、生词、引导问题和参考译文，可下载现有 EPUB、PDF、AZW3、MOBI。第一册讲解页新增“课文精听”，与电子书页面共用播放组件和进度。第二至四册讲解关联留有 TODO，导入课程源后再接入。
+
+点击句子播放本句原音，点击单词播放其在当前句中的原音，生词表播放统一 `af_heart` 美音词音。开启“循环选中内容”后间隔 0.5 秒复读；整课播放退出局部循环。上一句／下一句只遍历正文。支持 0.5×–2× 且保持音调；空格暂停／继续，左右键切句，输入框和按钮保留自己的键盘操作。手动滚动会暂停跟随，可用“回到当前句”恢复。
+
+### 准备教材
+
+源目录保持原交付结构：`data/bookN.json`、`audio/bookN/index.json`、MP3 和根目录电子书文件。`TEXTBOOK_ROOT` 只读；所有生成内容在 `DATA_ROOT/textbooks`，不进入源码或镜像。教材准备是部署前的离线步骤，网站不安装语音模型。
+
+只生成阅读数据（无需额外 Python 包，可先启动网站）：
+
+```sh
+python3 tools/prepare_textbooks.py --source /absolute/path/to/textbooks --data ./data
+TEXTBOOK_ROOT=/absolute/path/to/textbooks DATA_ROOT=./data go run ./cmd/firstleap
+# 打开 http://localhost:8000/books
+```
+
+完整生成逐词时间与统一生词音频，推荐单独的 CPU Python 3.11 环境：
+
+```sh
+uv venv --python 3.11 .venv-textbooks
+uv pip install --python .venv-textbooks/bin/python torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+uv pip install --python .venv-textbooks/bin/python whisperx==3.8.6 --no-deps
+uv pip install --python .venv-textbooks/bin/python -r tools/requirements-textbooks.txt
+# 设置 VIRTUAL_ENV 供首次安装英语分词资源使用。
+VIRTUAL_ENV="$PWD/.venv-textbooks" .venv-textbooks/bin/python tools/prepare_textbooks.py --source /absolute/path/to/textbooks --data ./data --align --pronunciations
+```
+
+只使用 WhisperX 的强制对齐接口及 `facebook/wav2vec2-base-960h`，无需 ASR、说话人模型或 Hugging Face 私有令牌。首次运行会下载模型和英语分词资源；CPU 完整准备需要持续运行一段时间。通过 `HF_HOME`、`NLTK_DATA`、`UV_CACHE_DIR` 可将临时依赖与模型放到空间足够的位置。可先用 `--books 1 --lesson 1` 验证首课，再去掉限制处理四册。
+
+生成按课原子写入，成功的课文和词音可断点复用；输入、修正或音频版本变化会重建对应课文。`--pronunciations-only` 从已有数据生成词音，不会改写正在对齐的课文。`--retry-partial` 重试缺词的对齐；`--threads 1` 可用于限制 CPU 线程。Linux 上可加 `--workers 2` 共享模型权重并行对齐；根据可用内存调整并发。
+
+正文展示采用与教材顺序对应的朗读文字，保留教材的段落、人物标签及未朗读署名；录音和教材的文字差异输出到 `data/textbooks/library/reports`，不会修改原交付文件。第三册 Lesson 7 的重复句段在导入时处理；第一册 Lesson 55 排除误匹配的导读，Lesson 71 的句尾否定词使用经原音复核的时间修正。标题、问题等导读内容不作为正文导航目标。句子已有原始字幕边界，逐词边界由声学模型取得；缺少可靠时间的词保留文本，等待校订，不均分时长。`tools/textbook_overrides.json` 支持：
+
+```json
+{
+  "lessons": {"1:1": {"bodyStart": 4, "sentences": {"4": "Excuse me!"}}},
+  "timings": {"1:1": {"s4-w0": [15.11, 15.6]}},
+  "pronunciations": {"word|n.": "phonemes"}
+}
+```
+
+课号键为“册号:课号”，句子编号沿用原音时间轴的位置，单词 ID 按句内位置区分。修正后重新生成对应课文，检查异常报告及实际听感。第四册第 43 课的大数表达 `million million` 属于原音内容，保留其数学含义，不直接删除。
+
+可选的 ONNX CPU 推理仍使用相同的 Kokoro v1.0 模型及音色：安装 `tools/requirements-textbooks-onnx.txt`，从 [Kokoro ONNX 模型发布页](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1) 获取未量化的 `kokoro-v1.0.onnx` 和 `voices-v1.0.bin`，在生成词音时追加 `--tts-onnx-model /path/kokoro-v1.0.onnx --tts-onnx-voices /path/voices-v1.0.bin`。独立进程可用 `--pronunciation-shard 0/2` 和 `1/2` 分担词库，各自复用已有输出。
+
+### 服务、缓存与部署
+
+新增接口：`GET /api/books`、`GET /api/books/{book}`、`GET /api/books/{book}/lessons/{lesson}`；整课音频后缀 `/audio`，句／词片段为 `/clips/{segmentId}`。词音为 `/api/pronunciations/{id}`，电子书为 `/api/books/{book}/downloads/{format}`。音频、词音、片段和下载均支持 HEAD、Range、ETag 与条件请求。接口不会暴露主机路径。
+
+片段只接受已登记的句／词 ID，后台最多同时生成两个；相同请求共用任务，结果原子写入 `DATA_ROOT/textbooks/clips`。缓存键包含音频文件版本、课文修订和片段边界。片段使用 PCM WAV，以自然结束事件控制复读，避免浏览器计时轮询导致越界。音频源失联时仍能读取已生成的课文，恢复后可直接重试。
+
+已有生产部署可增加 `compose.textbooks.yaml` 叠加配置，并在服务器 `.env` 设置：
+
+```dotenv
+COMPOSE_FILE=compose.yaml:compose.textbooks.yaml
+FIRSTLEAP_TEXTBOOK_PATH=/srv/firstleap/textbooks
+```
+
+将源资料放到该只读挂载目录，将离线生成的 `textbooks/library` 放到服务端 `data/textbooks/library`；确保容器用户 10001 可读，并可写 `data/textbooks/clips`。教材目录允许本地资源，不受视频专用 CIFS 检查约束。原 Compose 单独使用时仍可正常提供视频。
+
+沿用现有 NAS 部署时，将完整原始教材目录复制到视频源 `NCESE01` 同级的 `NCESE01-textbooks`，在目标目录运行 `sha256sum --quiet -c MANIFEST.sha256` 核验复制结果。然后以 root 运行 `deploy/install-textbook-mount.py`：脚本从服务器现有视频挂载配置推导教材路径，复用私有凭据，创建 `/srv/firstleap/textbooks` 只读挂载，并为 `firstleap.service` 增加等待该挂载的配置。更新 Compose 配置、复制生成数据并验证权限后，再拉取新镜像和重启本服务。
+
+更新前备份 `.env`、Compose 文件、systemd 配置并记录旧镜像 digest。保留源资料和整个数据目录即可更新／回滚应用，无需重新运行模型；回滚旧镜像时可以保留教材挂载和数据。需要释放片段缓存时可清理 `data/textbooks/clips`，之后按需重建；保留 `textbooks/library` 中的课文与词音。
+
+精听进度位于 `firstleap.textbook.progress.v1`，按“册号:课号”保存整课位置、当前句、倍速及听完状态。点读与复读不会覆盖整课续听位置，不会自动把整课标记完成。视频、整课音频和点读播放互斥；手机后台行为遵循浏览器的媒体限制。
+
+### 验证
+
+```sh
+python3 -m unittest discover -s tools -p 'test_*.py'
+go vet ./...
+go test -race ./...
+pnpm test
+pnpm build
+pnpm test:e2e
+```
+
+完整准备后运行 `python3 tools/verify_textbooks.py --data ./data --decode`，核对 276 课、全部单词边界及生词音频解码；报告保存在 `data/textbooks/library/reports/validation.json`。
+
+浏览器测试使用真实生成的音频验证自然结束复读、同词不同位置、倍速、高亮、续听、模式切换和手机布局。若本机尚未安装当前 Playwright 所需浏览器，先运行 `pnpm exec playwright install chromium`；也可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指定已安装的 Chromium。

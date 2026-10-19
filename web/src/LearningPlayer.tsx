@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { resumePosition, type LessonProgress } from "./progress";
 import "./player.css";
+import { claimMedia, MEDIA_EVENT } from "./mediaCoordinator";
 
 // FirstLeap owns resume, completion and retry policy for both media types.
 Artplayer.LOG_VERSION = false;
@@ -140,6 +141,7 @@ export function LearningPlayer(props: Props) {
       timeline.setAttribute("aria-disabled", "true");
     });
     art.on("video:play", () => {
+      claimMedia(video);
       pausedEndSeek.current = false;
       setPlaying(true);
       setReplayBlocked(false);
@@ -188,11 +190,14 @@ export function LearningPlayer(props: Props) {
     const visibility = () => { if (document.visibilityState === "hidden") persist(); };
     window.addEventListener("pagehide", persist);
     document.addEventListener("visibilitychange", visibility);
+    const otherMedia = (event: Event) => { if ((event as CustomEvent).detail !== video) video.pause(); };
+    window.addEventListener(MEDIA_EVENT, otherMedia);
     return () => {
       persist();
       video.pause();
       window.removeEventListener("pagehide", persist);
       document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener(MEDIA_EVENT, otherMedia);
       art.destroy();
       player.current = null;
     };

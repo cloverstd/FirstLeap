@@ -15,3 +15,11 @@ test-results/
 *.jpeg
 *.png
 !web/public/*
+.venv-textbooks/
+__pycache__/
+*.mp3
+*.wav
+*.epub
+*.pdf
+*.azw3
+*.mobi

@@ -30,6 +30,7 @@ import {
 } from "./progress";
 import "./styles.css";
 import { LearningPlayer } from "./LearningPlayer";
+import { Textbooks, TextbookLesson } from "./Textbooks";
 
 type Lesson = {
   id: string;
@@ -38,6 +39,7 @@ type Lesson = {
   title: string;
   duration: number;
   thumbnail: boolean;
+  textbook?: { book: number; lesson: number };
   reading?: {
     id: string;
     number: number;
@@ -145,7 +147,11 @@ function Header({ learning, home }: { learning: boolean; home: () => void }) {
         </a>
         <nav aria-label="主导航">
           <a
-            className={!learning ? "nav-active" : ""}
+            className={
+              !learning && !window.location.pathname.startsWith("/books")
+                ? "nav-active"
+                : ""
+            }
             href="/"
             onClick={(e) => {
               e.preventDefault();
@@ -153,6 +159,14 @@ function Header({ learning, home }: { learning: boolean; home: () => void }) {
             }}
           >
             我的课堂
+          </a>
+          <a
+            href="/books"
+            className={
+              window.location.pathname.startsWith("/books") ? "nav-active" : ""
+            }
+          >
+            电子书
           </a>
           <span className="header-divider" />
           <span className="header-note">每一步，都算数。</span>
@@ -637,6 +651,11 @@ function Classroom({
   const index = course.lessons.findIndex((l) => l.id === lesson.id);
   const [mode, setMode] = useState(() => {
     try {
+      if (
+        lesson.textbook &&
+        localStorage.getItem("firstleap.player-mode.v1") === "text"
+      )
+        return "text";
       return localStorage.getItem("firstleap.player-mode.v1") === "reading"
         ? "reading"
         : "lecture";
@@ -685,6 +704,7 @@ function Classroom({
     [],
   );
   const isReading = mode === "reading" && Boolean(lesson.reading);
+  const isText = mode === "text" && Boolean(lesson.textbook);
   useEffect(() => {
     if (isReading && loopReading) setContinuous(false);
   }, [isReading, loopReading]);
@@ -717,11 +737,11 @@ function Classroom({
       </div>
       <div className="classroom-grid">
         <section className="watch-column">
-          {lesson.reading && (
-            <div className="player-modes" role="group" aria-label="视频类型">
+          {(lesson.reading || lesson.textbook) && (
+            <div className="player-modes" role="group" aria-label="学习模式">
               <button
-                className={!isReading ? "selected" : ""}
-                aria-pressed={!isReading}
+                className={!isReading && !isText ? "selected" : ""}
+                aria-pressed={!isReading && !isText}
                 onClick={() => {
                   setMode("lecture");
                   try {
@@ -733,24 +753,54 @@ function Classroom({
               >
                 课程讲解
               </button>
-              <button
-                className={isReading ? "selected" : ""}
-                aria-pressed={isReading}
-                onClick={() => {
-                  setMode("reading");
-                  try {
-                    localStorage.setItem("firstleap.player-mode.v1", "reading");
-                  } catch {
-                    /* Playback remains available. */
-                  }
-                }}
-              >
-                美音朗读
-              </button>
-              <span>Lesson {lesson.reading.number} 课文朗读</span>
+              {lesson.reading && (
+                <button
+                  className={isReading ? "selected" : ""}
+                  aria-pressed={isReading}
+                  onClick={() => {
+                    setMode("reading");
+                    try {
+                      localStorage.setItem(
+                        "firstleap.player-mode.v1",
+                        "reading",
+                      );
+                    } catch {
+                      /* Playback remains available. */
+                    }
+                  }}
+                >
+                  美音朗读
+                </button>
+              )}
+              {lesson.textbook && (
+                <button
+                  className={isText ? "selected" : ""}
+                  aria-pressed={isText}
+                  onClick={() => {
+                    setMode("text");
+                    try {
+                      localStorage.setItem("firstleap.player-mode.v1", "text");
+                    } catch {
+                      /* Optional preference. */
+                    }
+                  }}
+                >
+                  课文精听
+                </button>
+              )}
+              {lesson.reading && (
+                <span>Lesson {lesson.reading.number} 课文朗读</span>
+              )}
             </div>
           )}
-          {isReading && !readingReady ? (
+          {isText && lesson.textbook ? (
+            <TextbookLesson
+              key={`${lesson.textbook.book}:${lesson.textbook.lesson}`}
+              book={lesson.textbook.book}
+              lesson={lesson.textbook.lesson}
+              embedded
+            />
+          ) : isReading && !readingReady ? (
             <div className="reading-placeholder" role="status">
               <BookOpen size={30} />
               <p>{readingMessage}</p>
@@ -776,8 +826,16 @@ function Classroom({
               onLoopChange={changeLoop}
               progressID={activeID}
               source={`/api/lessons/${lesson.id}/${isReading ? "reading/" : ""}video`}
-              poster={!isReading && lesson.thumbnail ? `/api/lessons/${lesson.id}/thumbnail` : undefined}
-              title={isReading ? `Lesson ${lesson.reading?.number} 美音朗读` : lesson.title}
+              poster={
+                !isReading && lesson.thumbnail
+                  ? `/api/lessons/${lesson.id}/thumbnail`
+                  : undefined
+              }
+              title={
+                isReading
+                  ? `Lesson ${lesson.reading?.number} 美音朗读`
+                  : lesson.title
+              }
               continuous={continuous}
               onContinuousChange={(enabled) => {
                 setContinuous(enabled);
@@ -797,44 +855,46 @@ function Classroom({
               浏览器无法保存朗读进度，请检查存储空间或隐私设置。
             </p>
           )}
-          <div className="watch-heading">
-            <div>
-              <span className="eyebrow">{lesson.label.toUpperCase()}</span>
-              <h1>{lesson.title}</h1>
-              <p>
-                {isReading ? (
-                  `Lesson ${lesson.reading!.number} · 美音朗读`
-                ) : (
-                  <>
-                    <span className="teacher-avatar">霍</span>霍娜老师
-                    <span className="dot-separator">·</span>新东方
-                  </>
-                )}
-                <span className="dot-separator">·</span>
-                {isReading
-                  ? lesson.reading!.duration
-                    ? time(lesson.reading!.duration)
-                    : "课文视频"
-                  : lesson.duration
-                    ? time(lesson.duration)
-                    : "课程视频"}
-              </p>
+          {!isText && (
+            <div className="watch-heading">
+              <div>
+                <span className="eyebrow">{lesson.label.toUpperCase()}</span>
+                <h1>{lesson.title}</h1>
+                <p>
+                  {isReading ? (
+                    `Lesson ${lesson.reading!.number} · 美音朗读`
+                  ) : (
+                    <>
+                      <span className="teacher-avatar">霍</span>霍娜老师
+                      <span className="dot-separator">·</span>新东方
+                    </>
+                  )}
+                  <span className="dot-separator">·</span>
+                  {isReading
+                    ? lesson.reading!.duration
+                      ? time(lesson.reading!.duration)
+                      : "课文视频"
+                    : lesson.duration
+                      ? time(lesson.duration)
+                      : "课程视频"}
+                </p>
+              </div>
+              <button
+                className={`complete-button ${completed ? "is-complete" : ""}`}
+                disabled={isReading && !readingReady}
+                aria-pressed={Boolean(completed)}
+                onClick={() =>
+                  activeUpdate(activeID, {
+                    completed: !completed,
+                    position: activeProgress?.position || 0,
+                  })
+                }
+              >
+                <CheckCircle2 size={18} />
+                {completed ? "已完成" : "标记完成"}
+              </button>
             </div>
-            <button
-              className={`complete-button ${completed ? "is-complete" : ""}`}
-              disabled={isReading && !readingReady}
-              aria-pressed={Boolean(completed)}
-              onClick={() =>
-                activeUpdate(activeID, {
-                  completed: !completed,
-                  position: activeProgress?.position || 0,
-                })
-              }
-            >
-              <CheckCircle2 size={18} />
-              {completed ? "已完成" : "标记完成"}
-            </button>
-          </div>
+          )}
           <div className="lesson-navigation">
             <button
               disabled={index <= 0}
@@ -892,6 +952,7 @@ function Classroom({
 }
 
 function App() {
+  const [pathname, setPathname] = useState(window.location.pathname);
   const [course, setCourse] = useState<Course | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -921,6 +982,7 @@ function App() {
   }, [refresh]);
   useEffect(() => {
     const listener = () => {
+      setPathname(window.location.pathname);
       setId(lessonFromPath());
       setAutoplay(false);
     };
@@ -966,15 +1028,20 @@ function App() {
       next ? `/learn/${encodeURIComponent(next)}` : "/",
     );
     setAutoplay(Boolean(next));
+    setPathname(window.location.pathname);
     setId(next);
     window.scrollTo({ top: 0 });
   };
   const lesson = course?.lessons.find((l) => l.id === id);
   useEffect(() => {
+    if (pathname.startsWith("/books")) {
+      document.title = "电子书与精听 | FirstLeap";
+      return;
+    }
     document.title = lesson
       ? `${lesson.label} · ${lesson.title} | FirstLeap`
       : "FirstLeap · 一课一步，学有所获";
-  }, [lesson]);
+  }, [lesson, pathname]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (
@@ -997,18 +1064,21 @@ function App() {
           浏览器暂时无法保存进度；本次学习仍可正常进行。
         </div>
       )}
-      {(failed || (course && !course.sourceAvailable && !course.indexing)) && (
-        <div className="notice" role="alert">
-          <WifiOff size={17} />
-          <span>
-            {failed
-              ? "暂时无法连接课堂，请检查网络。"
-              : "课程视频源暂时不可用，学习进度仍然保留。"}
-          </span>
-          <button onClick={() => void refresh()}>重试</button>
-        </div>
-      )}
-      {loading ? (
+      {!pathname.startsWith("/books") &&
+        (failed || (course && !course.sourceAvailable && !course.indexing)) && (
+          <div className="notice" role="alert">
+            <WifiOff size={17} />
+            <span>
+              {failed
+                ? "暂时无法连接课堂，请检查网络。"
+                : "课程视频源暂时不可用，学习进度仍然保留。"}
+            </span>
+            <button onClick={() => void refresh()}>重试</button>
+          </div>
+        )}
+      {pathname.startsWith("/books") ? (
+        <Textbooks pathname={pathname} />
+      ) : loading ? (
         <div className="page-state">
           <LoaderCircle className="spin" size={30} />
           <h1>正在打开你的课堂…</h1>

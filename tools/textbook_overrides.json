@@ -1,0 +1,18 @@
+{
+  "lessons": {
+    "1:55": { "bodyStart": 4 },
+    "4:43": {
+      "sentences": {
+        "7": "There are one hundred thousand million stars in our own Milky Way alone, and then there are three thousand million other milky ways or galaxies, in the universe."
+      }
+    }
+  },
+  "timings": {
+    "1:71": {
+      "s22": [102.275, 104.58],
+      "s22-w1": [103.04, 103.44],
+      "s22-w2": [103.44, 104.48]
+    }
+  },
+  "pronunciations": {}
+}

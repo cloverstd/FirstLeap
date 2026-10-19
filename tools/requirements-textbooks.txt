@@ -1,0 +1,9 @@
+# Install CPU torch/torchaudio first; install whisperx==3.8.6 --no-deps.
+# Only WhisperX alignment is used, not ASR, diarization or GPU dependencies.
+transformers==4.57.6
+nltk==3.9.2
+pandas==2.3.3
+numpy==2.2.6
+kokoro==0.9.4
+soundfile==0.14.0
+num2words==0.5.14

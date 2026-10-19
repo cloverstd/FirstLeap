@@ -34,7 +34,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	a, err := app.New(app.Config{MediaRoot: env("MEDIA_ROOT", "/media"), ReadingRoot: os.Getenv("READING_ROOT"), DataRoot: env("DATA_ROOT", "/data"), WebRoot: env("WEB_ROOT", "web/dist"), RequireCIFS: os.Getenv("REQUIRE_CIFS") == "true"})
+	a, err := app.New(app.Config{MediaRoot: env("MEDIA_ROOT", "/media"), ReadingRoot: os.Getenv("READING_ROOT"), TextbookRoot: os.Getenv("TEXTBOOK_ROOT"), DataRoot: env("DATA_ROOT", "/data"), WebRoot: env("WEB_ROOT", "web/dist"), RequireCIFS: os.Getenv("REQUIRE_CIFS") == "true"})
 	if err != nil {
 		log.Fatal("Unable to initialize application storage")
 	}

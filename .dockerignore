@@ -8,5 +8,13 @@ data
 **/*.credentials
 **/secrets
 **/*.mp4
+**/*.mp3
+**/*.wav
+**/*.epub
+**/*.pdf
+**/*.azw3
+**/*.mobi
+.venv-textbooks
+**/__pycache__
 test-results
 playwright-report

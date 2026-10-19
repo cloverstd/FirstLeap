@@ -15,7 +15,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /firstleap ./cmd/firstleap
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/* && groupadd -g 10001 firstleap && useradd -u 10001 -g firstleap -M firstleap && mkdir -p /data /media /readings /app/web && chown firstleap:firstleap /data
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/* && groupadd -g 10001 firstleap && useradd -u 10001 -g firstleap -M firstleap && mkdir -p /data /media /readings /textbooks /app/web && chown firstleap:firstleap /data
 COPY --from=backend /firstleap /usr/local/bin/firstleap
 COPY --from=frontend /src/web/dist /app/web
 WORKDIR /app

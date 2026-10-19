@@ -33,6 +33,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: go vet ./... && go test -race ./...
       - run: pnpm test && pnpm build
+      - run: python3 -m unittest discover -s tools -p 'test_*.py'
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
   image:

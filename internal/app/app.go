@@ -22,17 +22,18 @@ import (
 )
 
 type Config struct {
-	MediaRoot, ReadingRoot, DataRoot, WebRoot string
-	RequireCIFS                               bool
+	MediaRoot, ReadingRoot, TextbookRoot, DataRoot, WebRoot string
+	RequireCIFS                                             bool
 }
 type Lesson struct {
-	ID        string   `json:"id"`
-	Order     int      `json:"order"`
-	Label     string   `json:"label"`
-	Title     string   `json:"title"`
-	Duration  float64  `json:"duration"`
-	Thumbnail bool     `json:"thumbnail"`
-	Reading   *Reading `json:"reading,omitempty"`
+	ID        string       `json:"id"`
+	Order     int          `json:"order"`
+	Label     string       `json:"label"`
+	Title     string       `json:"title"`
+	Duration  float64      `json:"duration"`
+	Thumbnail bool         `json:"thumbnail"`
+	Reading   *Reading     `json:"reading,omitempty"`
+	Textbook  *TextbookRef `json:"textbook,omitempty"`
 }
 type entry struct {
 	Lesson
@@ -58,6 +59,9 @@ type App struct {
 	scanMu              sync.Mutex
 	readings            map[int]readingEntry
 	readingsAvailable   bool
+	clipMu              sync.Mutex
+	clipJobs            map[string]*clipJob
+	clipSlots           chan struct{}
 }
 
 var prefix = regexp.MustCompile(`^(\d+)\s*[-–—]\s*`)
@@ -90,7 +94,7 @@ func New(cfg Config) (*App, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.DataRoot, "thumbnails"), 0750); err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, entries: make(map[string]entry), readings: make(map[int]readingEntry), indexing: true}
+	a := &App{cfg: cfg, entries: make(map[string]entry), readings: make(map[int]readingEntry), indexing: true, clipJobs: make(map[string]*clipJob), clipSlots: make(chan struct{}, 2)}
 	if data, err := os.ReadFile(filepath.Join(cfg.DataRoot, "readings", "catalog.json")); err == nil {
 		_ = json.Unmarshal(data, &a.readings)
 	}
@@ -309,6 +313,9 @@ func (a *App) course() Course {
 	for _, e := range a.entries {
 		lesson := e.Lesson
 		lesson.Reading = a.readingFor(lesson)
+		if n := textbookNumber(lesson); n > 0 && n <= 143 && n%2 == 1 && a.cfg.TextbookRoot != "" {
+			lesson.Textbook = &TextbookRef{Book: 1, Lesson: n}
+		}
 		c.Lessons = append(c.Lessons, lesson)
 		c.Duration += e.Duration
 	}
@@ -333,6 +340,7 @@ func failure(w http.ResponseWriter, status int, message string) {
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	a.textbookRoutes(mux)
 	mux.HandleFunc("GET /api/lessons/{id}/reading/video", a.readingVideo)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, map[string]bool{"ok": true}) })
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
