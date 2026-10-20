@@ -1,5 +1,14 @@
 import type { SpeechAudio } from "./ai";
 
+// Count the exact segment inputs, including punctuation and internal whitespace.
+// Unicode code points match the server's splitting limit, including surrogate pairs.
+export function speechCharacterCount(audio: SpeechAudio): number {
+  return audio.segments.reduce(
+    (total, segment) => total + Array.from(segment.text).length,
+    0,
+  );
+}
+
 export function readySpeechDuration(audio?: SpeechAudio | null): number {
   let duration = 0;
   for (const segment of audio?.segments || []) {

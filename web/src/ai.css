@@ -52,6 +52,12 @@
 .ai-speech-script summary {
   cursor: pointer;
 }
+.ai-speech-character-count {
+  display: inline-block;
+  margin-inline-start: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
 .ai-speech-script p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
