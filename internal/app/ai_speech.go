@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"os"
@@ -19,6 +18,10 @@ import (
 
 type ttsConfig struct {
 	modelConfig
+	APIType          string         `json:"apiType,omitempty"`
+	ResourceID       string         `json:"resourceId,omitempty"`
+	AuthMode         string         `json:"authMode,omitempty"`
+	AppID            string         `json:"appId,omitempty"`
 	Enabled          bool           `json:"enabled"`
 	Voice            string         `json:"voice"`
 	Speed            float64        `json:"speed"`
@@ -31,27 +34,6 @@ type ttsConfig struct {
 
 func defaultTTSConfig() ttsConfig {
 	return ttsConfig{Speed: 1, Format: "mp3", InstructionField: "none", Timeout: 300, Extra: map[string]any{}}
-}
-
-func validateTTS(c ttsConfig) error {
-	if !validModelFields(c.modelConfig) || len(c.Voice) > 512 || math.IsNaN(c.Speed) || c.Speed < .25 || c.Speed > 4 || (c.Format != "mp3" && c.Format != "wav") || c.Timeout < 30 || c.Timeout > 1800 || len(c.Instructions) > 16000 {
-		return fmt.Errorf("请检查语音接口、音色、合成语速、格式和超时设置")
-	}
-	if c.InstructionField != "none" && c.InstructionField != "instructions" && c.InstructionField != "instruct" {
-		return fmt.Errorf("语音风格指令字段无效")
-	}
-	for _, key := range []string{"model", "input", "voice", "speed", "response_format", "instructions", "instruct", "stream", "stream_format"} {
-		if _, ok := c.Extra[key]; ok {
-			return fmt.Errorf("语音高级参数不能覆盖 %s", key)
-		}
-	}
-	if b, err := json.Marshal(c.Extra); err != nil || len(b) > 64<<10 {
-		return fmt.Errorf("语音高级参数必须是有效 JSON 对象且不超过 64 KB")
-	}
-	if c.Enabled && !configured(c.modelConfig) {
-		return fmt.Errorf("启用语音前请填写语音 Base URL 和 Model")
-	}
-	return nil
 }
 
 type speechSegment struct {
@@ -151,6 +133,9 @@ func (s *aiService) speechView(e explanation, enabled bool) speechView {
 
 func ttsFingerprint(c ttsConfig) string {
 	c.APIKey, c.KeySet, c.ClearKey, c.Enabled, c.Timeout = "", false, false, false, 0
+	if speechAPIType(c) == "openai" {
+		c.APIType = ""
+	}
 	return contentHash(c)
 }
 
@@ -162,7 +147,7 @@ func (s *aiService) ensureSpeech(e explanation, cfg aiSettings, force, retry boo
 	if v.JobID != "" || (!force && v.Pending == nil && v.Audio != nil && v.Audio.Status == "ready") {
 		return v, nil
 	}
-	if !cfg.TTS.Enabled || !configured(cfg.TTS.modelConfig) {
+	if !cfg.TTS.Enabled || !configuredTTS(cfg.TTS) {
 		return v, fmt.Errorf("请先在系统配置中启用并配置语音合成")
 	}
 	if !configured(cfg.Text.modelConfig) {
@@ -326,22 +311,13 @@ func (s *aiService) synthesizeSpeech(ctx context.Context, c ttsConfig, text, pat
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(c.Timeout)*time.Second)
 	defer cancel()
-	body := copyValue(c.Extra)
-	if body == nil {
-		body = map[string]any{}
-	}
-	body["model"], body["input"], body["speed"], body["response_format"] = c.Model, text, c.Speed, c.Format
-	if c.Voice != "" {
-		body["voice"] = c.Voice
-	}
-	if c.InstructionField != "none" && c.Instructions != "" {
-		body[c.InstructionField] = c.Instructions
-	}
-	resp, err := s.modelRequest(cctx, c.modelConfig, "/audio/speech", body)
+	adapter, err := speechAdapterFor(c)
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	if err = validateTTS(c); err != nil {
+		return 0, err
+	}
 	if err = os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return 0, fmt.Errorf("语音存储不可写")
 	}
@@ -351,11 +327,14 @@ func (s *aiService) synthesizeSpeech(ctx context.Context, c ttsConfig, text, pat
 	}
 	name := f.Name()
 	defer os.Remove(name)
-	const maxBytes = 32 << 20
-	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxBytes+1))
+	output := &limitedSpeechWriter{writer: f, remaining: maxSpeechBytes}
+	synthErr := adapter.synthesize(cctx, s, c, text, output)
 	syncErr, closeErr := f.Sync(), f.Close()
-	if copyErr != nil || syncErr != nil || closeErr != nil || n == 0 || n > maxBytes {
-		return 0, fmt.Errorf("音频响应为空、超过 32 MB、连接中断或保存失败")
+	if synthErr != nil {
+		return 0, synthErr
+	}
+	if syncErr != nil || closeErr != nil || output.remaining == maxSpeechBytes {
+		return 0, fmt.Errorf("音频响应为空、连接中断或保存失败")
 	}
 	duration, err := probeSpeech(cctx, name, c.Format)
 	if err != nil {
@@ -463,14 +442,22 @@ func (s *aiService) speechRoutes(mux *http.ServeMux) {
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		base, err := s.providerPreview(providerSettingsRequest{Group: "tts", ProviderID: req.ProviderID, Config: req.Config.modelConfig})
-		if err != nil {
-			failure(w, 400, err.Error())
-			return
+		settings := s.settingsSnapshot()
+		settings.ensureProviders()
+		saved := settings.TTS
+		if req.ProviderID != "" {
+			saved = settings.Providers.savedTTS(req.ProviderID)
 		}
-		req.Config.modelConfig = base
-		if err = validateTTS(req.Config); err != nil || !configured(base) {
-			failure(w, 400, "请检查语音模型和生成参数")
+		err := prepareTTS(&req.Config, saved)
+		if err == nil {
+			err = validateTTS(req.Config)
+		}
+		if err != nil || !configuredTTS(req.Config) {
+			message := "请检查语音模型和生成参数"
+			if err != nil {
+				message = err.Error()
+			}
+			failure(w, 400, message)
 			return
 		}
 		dir, err := os.MkdirTemp("", "firstleap-tts-preview-*")

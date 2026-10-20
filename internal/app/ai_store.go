@@ -258,13 +258,14 @@ func (s *aiService) settingsSnapshot() aiSettings {
 }
 func (s *aiService) settingsRoutes(mux *http.ServeMux) {
 	s.providerSettingsRoutes(mux)
+	s.providerManagementRoutes(mux)
 	mux.HandleFunc("GET /api/settings/ai", func(w http.ResponseWriter, r *http.Request) {
 		c := s.settingsSnapshot()
 		c.ensureProviders()
 		c.redactKeys()
 		defaults := defaultAISettings()
 		defaults.ensureProviders()
-		jsonResponse(w, 200, map[string]any{"settings": c, "defaults": defaults, "tools": aiToolCatalog})
+		jsonResponse(w, 200, map[string]any{"settings": c, "defaults": defaults, "tools": aiToolCatalog, "speechAdapters": speechCapabilityList()})
 	})
 	mux.HandleFunc("PUT /api/settings/ai", func(w http.ResponseWriter, r *http.Request) {
 		c := s.settingsSnapshot()

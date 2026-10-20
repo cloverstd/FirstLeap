@@ -14,6 +14,7 @@ import (
 )
 
 type providerSettingsRequest struct {
+	APIType    string      `json:"apiType,omitempty"`
 	Group      string      `json:"group"`
 	ProviderID string      `json:"providerId,omitempty"`
 	Config     modelConfig `json:"config"`
@@ -119,6 +120,26 @@ func (s *aiService) providerSettingsRoutes(mux *http.ServeMux) {
 			var req providerSettingsRequest
 			if !decodeBody(w, r, &req) {
 				return
+			}
+			if req.Group == "tts" {
+				settings := s.settingsSnapshot()
+				settings.ensureProviders()
+				saved := settings.TTS
+				if req.ProviderID != "" {
+					saved = settings.Providers.savedTTS(req.ProviderID)
+				}
+				apiType := req.APIType
+				if apiType == "" {
+					apiType = speechAPIType(saved)
+				}
+				if apiType != "openai" {
+					failure(w, 400, "此原生语音接口不支持模型列表，请使用短句试听验证")
+					return
+				}
+				if speechAPIType(saved) != "openai" && saved.APIKey != "" && req.Config.APIKey == "" && !req.Config.ClearKey {
+					failure(w, 400, "语音接口已更改，请重新填写 API Key，或勾选清除 Key")
+					return
+				}
 			}
 			config, err := s.providerPreview(req)
 			if err != nil {
