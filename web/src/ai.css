@@ -101,7 +101,8 @@
   flex-direction: column;
   gap: 22px;
 }
-.ai-form > .ai-card {
+.ai-form > .ai-card,
+.ai-settings-fields > .ai-card {
   margin-bottom: 0;
 }
 .ai-settings-form,
@@ -111,7 +112,7 @@
   gap: 24px;
   align-items: start;
 }
-.ai-settings-form > *,
+.ai-settings-fields > *,
 .ai-profile-grid > * {
   min-width: 0;
 }
@@ -121,7 +122,7 @@
 .ai-tts-settings,
 .ai-tools-settings,
 .ai-prompts-settings,
-.ai-settings-form > .ai-save,
+.ai-settings-fields > .ai-save,
 .ai-profile-history {
   grid-column: 1 / -1;
 }
@@ -701,4 +702,16 @@
     padding-left: 10px;
     padding-right: 10px;
   }
+}
+
+.ai-settings-fields {
+  display: contents;
+}
+.ai-provider-picker {
+  margin-block: 20px;
+  padding-block: 18px;
+  border-block: 1px solid var(--border);
+}
+.ai-provider-picker .ai-provider-actions {
+  margin-block: 14px 8px;
 }

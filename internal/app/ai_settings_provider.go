@@ -14,23 +14,30 @@ import (
 )
 
 type providerSettingsRequest struct {
-	Group  string      `json:"group"`
-	Config modelConfig `json:"config"`
+	Group      string      `json:"group"`
+	ProviderID string      `json:"providerId,omitempty"`
+	Config     modelConfig `json:"config"`
 }
 
 // Preview the draft without saving it or returning stored credentials to the browser.
 func (s *aiService) providerPreview(req providerSettingsRequest) (modelConfig, error) {
 	settings := s.settingsSnapshot()
-	var saved modelConfig
-	switch req.Group {
-	case "text":
-		saved = settings.Text.modelConfig
-	case "image":
-		saved = settings.Image.modelConfig
-	case "tts":
-		saved = settings.TTS.modelConfig
-	default:
+	if req.Group != "text" && req.Group != "image" && req.Group != "tts" {
 		return modelConfig{}, fmt.Errorf("请选择文字、生图或语音模型")
+	}
+	var saved modelConfig
+	if req.ProviderID != "" {
+		settings.ensureProviders()
+		saved = settings.Providers.savedModel(req.Group, req.ProviderID)
+	} else {
+		switch req.Group {
+		case "text":
+			saved = settings.Text.modelConfig
+		case "image":
+			saved = settings.Image.modelConfig
+		case "tts":
+			saved = settings.TTS.modelConfig
+		}
 	}
 	c := req.Config
 	c.BaseURL = strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")

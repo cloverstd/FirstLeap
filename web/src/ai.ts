@@ -110,7 +110,12 @@ export type SpeechAudio = {
   id: string;
   script: string;
   status:
-    "queued" | "preparing" | "generating" | "ready" | "error" | "interrupted";
+    | "queued"
+    | "preparing"
+    | "generating"
+    | "ready"
+    | "error"
+    | "interrupted";
   error?: string;
   segments: { text: string; url?: string; duration: number }[];
 };
@@ -120,23 +125,34 @@ export type SpeechView = {
   pending?: SpeechAudio;
   jobId?: string;
 };
+export type TextConfig = ModelConfig & {
+  protocol: "chat" | "responses";
+  stream: boolean;
+  maxTokens: number;
+  tokenField: string;
+  temperature: number | null;
+  timeout: number;
+};
+export type ImageConfig = ModelConfig & {
+  enabled: boolean;
+  size: string;
+  quality: string;
+  timeout: number;
+  maxCalls: number;
+};
+export type ProviderGroup = "text" | "image" | "tts";
+export type AIProvider<T> = { id: string; name: string; config: T };
+export type AIProviders = {
+  text: AIProvider<TextConfig>[];
+  image: AIProvider<ImageConfig>[];
+  tts: AIProvider<TTSConfig>[];
+  defaults: Record<ProviderGroup, string>;
+};
 export type AISettings = {
   enabledTools: string[];
-  text: ModelConfig & {
-    protocol: "chat" | "responses";
-    stream: boolean;
-    maxTokens: number;
-    tokenField: string;
-    temperature: number | null;
-    timeout: number;
-  };
-  image: ModelConfig & {
-    enabled: boolean;
-    size: string;
-    quality: string;
-    timeout: number;
-    maxCalls: number;
-  };
+  providers: AIProviders;
+  text: TextConfig;
+  image: ImageConfig;
   tts: TTSConfig;
   prompts: Record<
     | "system"

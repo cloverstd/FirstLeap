@@ -53,11 +53,12 @@ type aiPrompts struct {
 	Speech     string `json:"speech"`
 }
 type aiSettings struct {
-	Text         textConfig  `json:"text"`
-	Image        imageConfig `json:"image"`
-	TTS          ttsConfig   `json:"tts"`
-	Prompts      aiPrompts   `json:"prompts"`
-	EnabledTools []string    `json:"enabledTools"`
+	Providers    *aiProviders `json:"providers,omitempty"`
+	Text         textConfig   `json:"text"`
+	Image        imageConfig  `json:"image"`
+	TTS          ttsConfig    `json:"tts"`
+	Prompts      aiPrompts    `json:"prompts"`
+	EnabledTools []string     `json:"enabledTools"`
 }
 
 func defaultAISettings() aiSettings {
@@ -252,22 +253,23 @@ func (s *aiService) settingsSnapshot() aiSettings {
 	defer s.mu.Unlock()
 	c := copyValue(s.settings)
 	c.EnabledTools = normalizedAITools(c.EnabledTools)
+	c.resolveProviders()
 	return c
 }
 func (s *aiService) settingsRoutes(mux *http.ServeMux) {
 	s.providerSettingsRoutes(mux)
 	mux.HandleFunc("GET /api/settings/ai", func(w http.ResponseWriter, r *http.Request) {
 		c := s.settingsSnapshot()
-		c.Text.KeySet = c.Text.APIKey != ""
-		c.Image.KeySet = c.Image.APIKey != ""
-		c.TTS.KeySet = c.TTS.APIKey != ""
-		c.Text.APIKey = ""
-		c.Image.APIKey = ""
-		c.TTS.APIKey = ""
-		jsonResponse(w, 200, map[string]any{"settings": c, "defaults": defaultAISettings(), "tools": aiToolCatalog})
+		c.ensureProviders()
+		c.redactKeys()
+		defaults := defaultAISettings()
+		defaults.ensureProviders()
+		jsonResponse(w, 200, map[string]any{"settings": c, "defaults": defaults, "tools": aiToolCatalog})
 	})
 	mux.HandleFunc("PUT /api/settings/ai", func(w http.ResponseWriter, r *http.Request) {
 		c := s.settingsSnapshot()
+		// Omission identifies legacy clients; never decode over stored provider keys.
+		c.Providers = nil
 		c.Text.APIKey, c.Image.APIKey, c.TTS.APIKey = "", "", ""
 		if !decodeBody(w, r, &c) {
 			return
@@ -277,17 +279,6 @@ func (s *aiService) settingsRoutes(mux *http.ServeMux) {
 				failure(w, 400, "包含不支持的 AI 工具")
 				return
 			}
-		}
-		c.Text.BaseURL = strings.TrimRight(strings.TrimSpace(c.Text.BaseURL), "/")
-		c.Image.BaseURL = strings.TrimRight(strings.TrimSpace(c.Image.BaseURL), "/")
-		c.TTS.BaseURL = strings.TrimRight(strings.TrimSpace(c.TTS.BaseURL), "/")
-		if err := validateTTS(c.TTS); err != nil {
-			failure(w, 400, err.Error())
-			return
-		}
-		if !validModelFields(c.Text.modelConfig) || !validModelFields(c.Image.modelConfig) || (c.Text.Protocol != "chat" && c.Text.Protocol != "responses") || c.Text.Timeout < 5 || c.Text.Timeout > 600 || c.Image.Timeout < 5 || c.Image.Timeout > 600 || c.Text.MaxTokens < 64 || c.Text.MaxTokens > 131072 || c.Image.MaxCalls < 0 || c.Image.MaxCalls > 6 || (c.Text.TokenField != "max_tokens" && c.Text.TokenField != "max_completion_tokens") || (c.Text.Temperature != nil && (*c.Text.Temperature < 0 || *c.Text.Temperature > 2)) || len(c.Image.Size) > 30 || len(c.Image.Quality) > 30 {
-			failure(w, 400, "请检查接口地址、协议、超时和生成参数")
-			return
 		}
 		for _, v := range []string{c.Prompts.System, c.Prompts.Lesson, c.Prompts.Sentence, c.Prompts.Word, c.Prompts.Image, c.Prompts.Assessment, c.Prompts.Evaluation, c.Prompts.Speech} {
 			if len(v) > 32000 {
@@ -301,34 +292,10 @@ func (s *aiService) settingsRoutes(mux *http.ServeMux) {
 			c.EnabledTools = s.settings.EnabledTools
 		}
 		c.EnabledTools = normalizedAITools(c.EnabledTools)
-		if c.Text.APIKey == "" && !c.Text.ClearKey {
-			c.Text.APIKey = s.settings.Text.APIKey
+		if err := c.prepareProviders(s.settings); err != nil {
+			failure(w, 400, err.Error())
+			return
 		}
-		if c.Image.APIKey == "" && !c.Image.ClearKey {
-			c.Image.APIKey = s.settings.Image.APIKey
-		}
-		if c.TTS.APIKey == "" && !c.TTS.ClearKey {
-			if c.TTS.BaseURL != s.settings.TTS.BaseURL && s.settings.TTS.APIKey != "" {
-				failure(w, 400, "语音服务地址已更改，请重新填写 API Key，或勾选清除 Key")
-				return
-			}
-			c.TTS.APIKey = s.settings.TTS.APIKey
-		}
-		if c.Text.ClearKey {
-			c.Text.APIKey = ""
-		}
-		if c.Image.ClearKey {
-			c.Image.APIKey = ""
-		}
-		if c.TTS.ClearKey {
-			c.TTS.APIKey = ""
-		}
-		c.TTS.ClearKey = false
-		c.TTS.KeySet = false
-		c.Text.ClearKey = false
-		c.Image.ClearKey = false
-		c.Text.KeySet = false
-		c.Image.KeySet = false
 		if err := writeJSONAtomic(filepath.Join(s.root, "settings.json"), c); err != nil {
 			failure(w, 500, "配置保存失败")
 			return

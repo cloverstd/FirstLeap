@@ -232,10 +232,22 @@ python3 tools/align_textbook_translations.py --data data --model data/textbooks/
 ### 首次配置与使用
 
 1. 打开 `/settings`，为文字模型填写包含 API 前缀的 Base URL 和 API Key，点击“获取模型列表”，再从服务商返回的模型中选择 Model。选择 Chat Completions 或 Responses，应用分别追加 `/chat/completions` 或 `/responses`。无需 Key 的本地服务可以留空。
-2. 按需独立配置生图服务并启用配图，接口为 `/images/generations`。两个模型的地址、Key 和 Model 完全独立。文字模型须支持所选协议的 function calling，模型通过 `generate_image` 工具自行决定是否配图。
+2. 按需分别添加多个文字、生图和语音 Provider，并为每类选择默认服务。独立配置生图服务并启用配图，接口为 `/images/generations`。不同 Provider 的地址、Key 和 Model 完全独立。文字模型须支持所选协议的 function calling，模型通过 `generate_image` 工具自行决定是否配图。
 3. 打开 `/learning-profile` 填写目标、薄弱项和口语／写作自评，或开始 16 题动态测评。测评包含词汇、语法、阅读、听力各 4 题，AI 根据之前的回答调整后续题目。听力复用现有可播放课程原音，无需额外语音服务；播放失败可重试或跳过，不记为答错。未完成的能力维度保留原档案。每道可作答题都额外提供“不知道”选项，无需猜答案；记录为明确的未掌握证据，用于后续出题与水平评估，与音频故障时不计分的跳过分开保存。
 4. 打开课程后，有缓存直接显示；首次整课详解需要点击生成。每句的 AI 按钮、生词 AI 按钮，以及划选后出现的 AI 按钮，会查询对应缓存，未命中时生成。单击单词仍然点读，划选不触发播放。
 5. 在“语音合成”中配置独立的 OpenAI 兼容 TTS 服务并开启自动生成。新详解完成后自动生成讲课稿和语音；旧详解在打开时补生成。首次生成可以先听已经完成的分段，生成完成后直接读取磁盘音频，不会自动出声。
+
+### 多 Provider 与默认服务
+
+文字、生图、语音分别支持保存多个 OpenAI 兼容 Provider。在每类配置中点击“添加 Provider”，填写名称、Base URL、API Key 和 Model；每个 Provider 独立保存协议、超时及生成参数，语音还独立保存音色、语速、格式和高级参数。
+
+“编辑 Provider”选择当前要修改或测试的服务，切换时保留未保存的草稿；“默认 Provider”独立决定保存后新任务使用的服务。文字默认服务同时用于详解、测评、能力评估和语音讲课稿，生图与语音各使用自己的默认服务。生图开关、自动生成语音开关、工具与提示词由所有 Provider 共用。删除当前默认服务前，需先选择另一个默认服务；添加、删除、改名和默认选择均需点击“保存系统配置”才生效。
+
+已有单服务配置自动显示为“原文字服务 / 原生图服务 / 原语音服务”，并作为对应默认 Provider，地址、密钥和参数保留。Key 留空只保留当前 Provider 自己的 Key，清除选项也只作用于当前 Provider；修改地址后须重新填写或显式清除 Key。模型列表、连接测试和语音试听使用当前编辑的 Provider，不改变已保存的默认选择。读取接口不返回任何 Provider 的 Key。
+
+配置接口的 `settings.providers` 包含 `text`、`image`、`tts` 三个列表，每项为 `{id, name, config}`，`defaults` 保存三类默认 Provider 的 ID。原有 `text`、`image`、`tts` 字段继续返回实际生效的默认配置，旧客户端省略 `providers` 时只更新默认服务并保留其它 Provider。模型列表、连接测试和语音试听请求可传 `providerId`，按该 Provider 复用已保存密钥；新增 Provider 不会继承其它服务的密钥。
+
+切换默认服务不会清空已有详解、图片或语音缓存；需要更新已有内容时使用对应的重新生成功能。已开始的任务继续使用启动时的配置。
 
 ### AI 语音讲解
 
