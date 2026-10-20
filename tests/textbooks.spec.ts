@@ -1052,13 +1052,14 @@ test("playback centers the highlighted sentence as it reaches each boundary", as
 });
 
 for (const mode of ["sentence", "paragraph"] as const) {
-  test(`${mode} following recovers after browsing, playback and returning to the current anchor`, async ({
+  test(`${mode} following stays off after manual scrolling until returning to the current anchor`, async ({
     page,
     isMobile,
   }) => {
     await page.setViewportSize(
       isMobile ? { width: 390, height: 844 } : { width: 1920, height: 1080 },
     );
+    await page.emulateMedia({ reducedMotion: "reduce" });
     const notes = (prefix: string) =>
       Array.from({ length: 18 }, (_, i) => ({
         id: `${prefix}-${i}`,
@@ -1108,29 +1109,41 @@ for (const mode of ["sentence", "paragraph"] as const) {
     await expect(target(2)).toHaveAttribute("aria-current", "true");
     await expect.poll(() => distance(2)).toBeLessThan(2);
 
-    // Scrolling before starting playback must not permanently disable following.
+    // Manual browsing disables following across playback boundaries and resumes.
     await browse(2);
+    const browsingY = await page.evaluate(() => window.scrollY);
+    const back = page.getByRole("button", { name: "回到当前句", exact: true });
     await page.getByRole("button", { name: "播放精听", exact: true }).click();
-    await expect.poll(() => distance(2)).toBeLessThan(2);
-
-    // Browsing during playback only suspends following for the current anchor.
-    await browse(2);
+    await expect(back).toBeVisible();
     await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
       audio.currentTime = 7.05;
     });
     await expect(target(3)).toHaveAttribute("aria-current", "true");
-    await expect.poll(() => distance(3)).toBeLessThan(2);
     await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+    await page.getByRole("button", { name: "播放精听", exact: true }).click();
+    await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+    await expect(back).toBeVisible();
+    await page.evaluate(
+      () => new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+    );
+    expect(await page.evaluate(() => window.scrollY)).toBe(browsingY);
 
-    // Revisiting the browsed anchor (for example in a loop) must still follow.
+    // The dock restores centering and following without changing paused playback.
+    await back.click();
+    await expect.poll(() => distance(3)).toBeLessThan(2);
+    await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+    await expect(back).toHaveCount(0);
+
+    // Once explicitly restored, following applies to later playback anchors too.
     await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
       audio.currentTime = 4.05;
     });
     await expect.poll(() => distance(2)).toBeLessThan(2);
 
-    // The dock exposes recovery while paused without opening the settings.
+    // Manual scrolling disables it again until the next explicit return.
     await browse(2);
-    const back = page.getByRole("button", { name: "回到当前句", exact: true });
     await expect(back).toBeVisible();
     await back.click();
     await expect.poll(() => distance(2)).toBeLessThan(2);

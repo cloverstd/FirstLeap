@@ -798,7 +798,6 @@ function ReadingRoom({
     interacted.current = true;
     const media = audio.current;
     if (!media) return;
-    setFollow(true);
     manualEnd.current = false;
     if (
       loopRef.current === "lesson" &&
@@ -1025,10 +1024,6 @@ function ReadingRoom({
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
   }, [playing]);
-  useEffect(() => {
-    // Manual browsing suspends following only until playback reaches a new anchor.
-    setFollow(true);
-  }, [anchor?.targetId, anchor?.mode]);
   useEffect(() => {
     if (!follow || !anchor || tab !== "passage") return;
     // Tabs mounts the passage through Radix Presence. Wait for that layout
