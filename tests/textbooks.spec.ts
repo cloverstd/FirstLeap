@@ -1476,6 +1476,17 @@ test("modal verbs explain missing forms without inventing participles", async ({
   ).toHaveText(["原形"]);
 });
 
+async function expectShadowPosition(page: Page, position: number) {
+  // A paused media clock can retain a sub-millisecond offset from its target.
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("textbook-audio")
+        .evaluate((audio: HTMLAudioElement) => audio.currentTime),
+    )
+    .toBeCloseTo(position, 2);
+}
+
 async function shadowReady(
   page: Page,
   mode: "sentence" | "paragraph" = "sentence",
@@ -1512,14 +1523,14 @@ test("shadow reading pauses at sentence boundaries, holds the previous highlight
   await approachShadowBoundary(page);
   const audio = page.getByTestId("textbook-audio");
   const started = Date.now();
-  await expect(audio).toHaveJSProperty("currentTime", 5);
+  await expectShadowPosition(page, 5);
   await expect(page.locator(".reading-sentence").first()).toHaveAttribute(
     "aria-current",
     "true",
   );
   await expect(page.locator(".reading-shadow-status")).toContainText("请跟读");
   await page.waitForTimeout(200);
-  await expect(audio).toHaveJSProperty("currentTime", 5);
+  await expectShadowPosition(page, 5);
   // An existing turn keeps the speed with which its audio was heard.
   await page.getByRole("combobox", { name: "精听倍速" }).click();
   await page.getByRole("option", { name: "0.5×", exact: true }).click();
@@ -1531,7 +1542,7 @@ test("shadow reading pauses at sentence boundaries, holds the previous highlight
     a.currentTime = 6.6;
   });
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(audio).toHaveJSProperty("currentTime", 6.8);
+  await expectShadowPosition(page, 6.8);
   await expect(page.locator(".reading-sentence").nth(1)).toHaveAttribute(
     "aria-current",
     "true",
@@ -1580,7 +1591,7 @@ test("shadow paragraph mode is independent of markers and preferences survive re
     .toBeGreaterThan(5.2);
   await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 6.8);
+  await expectShadowPosition(page, 6.8);
   await expect(page.locator(".reading-paragraph")).toHaveAttribute(
     "aria-current",
     "true",
@@ -1602,9 +1613,9 @@ test("shadow whole-lesson loop waits after the final body segment before returni
     .click();
   await approachShadowBoundary(page, 6.6);
   const audio = page.getByTestId("textbook-audio");
-  await expect(audio).toHaveJSProperty("currentTime", 6.8);
+  await expectShadowPosition(page, 6.8);
   await page.waitForTimeout(300);
-  await expect(audio).toHaveJSProperty("currentTime", 6.8);
+  await expectShadowPosition(page, 6.8);
   await expect(audio).toHaveJSProperty("paused", false);
   const time = await audio.evaluate((a: HTMLAudioElement) => a.currentTime);
   expect(time).toBeGreaterThanOrEqual(2);
@@ -1718,7 +1729,7 @@ test("manual pause cancels a shadow turn and resuming skips its remaining wait",
   await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
   await page.waitForTimeout(1700);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 5);
+  await expectShadowPosition(page, 5);
   await page.getByRole("region", { name: "课文精听", exact: true }).focus();
   await page.keyboard.press("Space");
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
@@ -1751,7 +1762,7 @@ test("changing shadow granularity resumes immediately without letting an old tur
   await page.keyboard.press("Escape");
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 6.8);
+  await expectShadowPosition(page, 6.8);
   await page.waitForTimeout(1600);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
   await expect(page.locator(".reading-paragraph")).toHaveAttribute(
@@ -1803,10 +1814,7 @@ test("embedded textbook player supports shadow reading and missing timings still
 }) => {
   await shadowReady(page, "sentence", "/learn/lesson1");
   await approachShadowBoundary(page);
-  await expect(page.getByTestId("textbook-audio")).toHaveJSProperty(
-    "currentTime",
-    5,
-  );
+  await expectShadowPosition(page, 5);
   await page.goto("/books/1/lessons/1");
   await page.route("**/api/books/1/lessons/1", (route) =>
     route.fulfill({
@@ -1880,10 +1888,10 @@ test("shadow final turn completes once when the body and audio end together", as
   await page.getByRole("option", { name: "1×", exact: true }).click();
   await page.getByRole("button", { name: "播放精听", exact: true }).click();
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 0.9);
+  await expectShadowPosition(page, 0.9);
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 1.8);
+  await expectShadowPosition(page, 1.8);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
   await expect(
     page.getByRole("button", { name: "暂停精听", exact: true }),
