@@ -208,6 +208,62 @@ func TestSpeechPipelineCacheReplacementAndRange(t *testing.T) {
 	}
 }
 
+func TestSpeechConcisePromptWithSavedLegacySettings(t *testing.T) {
+	for _, protocol := range []string{"chat", "responses"} {
+		t.Run(protocol, func(t *testing.T) {
+			wav := speechWAV(t)
+			a := aiFixture(t)
+			const script = "This is my umbrella. 这是我的雨伞。否定句在 is 后加 not。"
+			var scripts atomic.Int32
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/audio/speech" {
+					var input map[string]any
+					_ = json.NewDecoder(r.Body).Decode(&input)
+					if input["input"] != script {
+						t.Error("synthesis reused the old verbose script")
+					}
+					_, _ = w.Write(wav)
+					return
+				}
+				scripts.Add(1)
+				var input map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&input)
+				prompt, _ := input["instructions"].(string)
+				if protocol == "chat" {
+					prompt = input["messages"].([]any)[0].(map[string]any)["content"].(string)
+				}
+				if !strings.Contains(prompt, "保留全部内容") || !strings.Contains(prompt, "删除学习档案") {
+					t.Error("saved custom prompt did not receive the concision rules")
+				}
+				if protocol == "responses" {
+					jsonResponse(w, 200, map[string]any{"status": "completed", "output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": script}}}}})
+				} else {
+					chatJSON(w, script)
+				}
+			}))
+			defer provider.Close()
+			e := speechFixture(t, a, provider.URL)
+			cfg := a.ai.settingsSnapshot()
+			cfg.Text.Protocol = protocol
+			cfg.Prompts.Speech = "保留全部内容，用短段落讲课。"
+			if w := aiRequest(t, a, "PUT", "/api/settings/ai", cfg); w.Code != 200 {
+				t.Fatal(w.Body.String())
+			}
+			oldKey := contentHash([]string{"lecture-script-v1", contentHash(e.Content), cfg.Prompts.Speech})
+			if err := writeJSONAtomic(filepath.Join(a.ai.root, "speech", "scripts", oldKey+".json"), map[string]string{"text": "档案显示，你的总体水平是 2 级，现在是复习模式。"}); err != nil {
+				t.Fatal(err)
+			}
+			if state := waitAIJob(t, a, startSpeech(t, a, e, false, false)); state.Status != "done" {
+				t.Fatal(state.Error)
+			}
+			v := readSpeechView(t, a, e)
+			if scripts.Load() != 1 || v.Audio.Script != script || v.Audio.ScriptKey == oldKey {
+				t.Fatal("concise generation reused legacy script cache")
+			}
+		})
+	}
+}
+
 func TestSpeechPartialResumeAndInvalidAudio(t *testing.T) {
 	wav := speechWAV(t)
 	a := aiFixture(t)

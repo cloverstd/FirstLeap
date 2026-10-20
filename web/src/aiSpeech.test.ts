@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readySpeechDuration, speechPosition } from "./aiSpeech";
+import {
+  readySpeechDuration,
+  speechCharacterCount,
+  speechPosition,
+} from "./aiSpeech";
 import type { SpeechAudio } from "./ai";
 
 const audio: SpeechAudio = {
@@ -12,6 +16,21 @@ const audio: SpeechAudio = {
     { text: "第三段", duration: 0 },
   ],
 };
+describe("speech character usage", () => {
+  it("counts all synthesis inputs, including ungenerated segments and Unicode", () => {
+    expect(
+      speechCharacterCount({
+        ...audio,
+        script: "中🙂。\n\nHi! A\nB",
+        segments: [
+          { text: "中🙂。", url: "/first", duration: 10 },
+          { text: "Hi! A\nB", duration: 0 },
+        ],
+      }),
+    ).toBe(10);
+    expect(speechCharacterCount({ ...audio, segments: [] })).toBe(0);
+  });
+});
 describe("segmented lecture timeline", () => {
   it("only exposes the contiguous playable duration", () => {
     expect(readySpeechDuration(audio)).toBe(25);

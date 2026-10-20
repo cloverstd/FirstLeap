@@ -8,7 +8,11 @@ import {
   type SpeechAudio,
   type SpeechView,
 } from "./ai";
-import { readySpeechDuration, speechPosition } from "./aiSpeech";
+import {
+  readySpeechDuration,
+  speechCharacterCount,
+  speechPosition,
+} from "./aiSpeech";
 import { claimMedia, MEDIA_EVENT } from "./mediaCoordinator";
 
 const RATE_KEY = "firstleap.ai-speech.rate.v1";
@@ -433,7 +437,16 @@ export default function AISpeechPlayer({
       </div>
       {selected?.script && (
         <details className="ai-speech-script">
-          <summary>查看讲课稿</summary>
+          <summary>
+            <span>查看讲课稿</span>
+            <span
+              className="ai-speech-character-count"
+              aria-label="语音合成字符数"
+              title="按送给语音合成的分段文本统计：中文、英文字母、标点、空格和换行均计入；英文按字符计数。"
+            >
+              语音字符：{speechCharacterCount(selected).toLocaleString("zh-CN")}
+            </span>
+          </summary>
           <p>{selected.script}</p>
         </details>
       )}

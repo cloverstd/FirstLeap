@@ -684,6 +684,10 @@ test("AI lecture plays early segments, waits, coordinates media and survives res
     await expect(
       player.getByRole("button", { name: "播放 AI 讲解", exact: true }),
     ).toBeEnabled();
+    const characterCount = player.getByLabel("语音合成字符数", { exact: true });
+    await expect(characterCount).toBeVisible();
+    await expect(player.locator(".ai-speech-script")).not.toHaveAttribute("open");
+    const fullCharacterCount = await characterCount.innerText();
     expect(scriptCalls).toBe(1);
     await expect(player.getByRole("status")).toContainText("正在生成语音");
     const audio = page.locator('audio[aria-label="AI 讲解音频"]');
@@ -705,6 +709,13 @@ test("AI lecture plays early segments, waits, coordinates media and survives res
     await expect(player.getByRole("status")).toContainText("正在等待下一段");
     release();
     await expect(player.getByRole("status")).toContainText("语音已保存");
+    const sentCharacters = modelRequests
+      .filter((input) => input.response_format === "mp3")
+      .reduce((total, input) => total + Array.from(input.input as string).length, 0);
+    expect(fullCharacterCount).toBe(
+      `语音字符：${sentCharacters.toLocaleString("zh-CN")}`,
+    );
+    await expect(characterCount).toHaveText(fullCharacterCount);
     await expect(audio).toHaveAttribute("src", /\/segments\/1$/);
     await expect
       .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
@@ -737,6 +748,7 @@ test("AI lecture plays early segments, waits, coordinates media and survives res
     await page.reload();
     await openAI(page);
     await expect(player.getByRole("status")).toContainText("语音已保存");
+    await expect(characterCount).toHaveText(fullCharacterCount);
     await expect(player.getByLabel("AI 讲解播放倍速")).toHaveValue("2");
     await player
       .getByRole("button", { name: "播放 AI 讲解", exact: true })
