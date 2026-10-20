@@ -192,6 +192,10 @@ func validateDoubaoAudio(c ttsConfig) error {
 	if err := validateDoubaoAuth(c); err != nil {
 		return err
 	}
+	// Reserve space for the fixed prompt, voice reference and a 300-rune segment.
+	if utf8.RuneCountInString(c.Instructions) > 2500 {
+		return fmt.Errorf("豆包音频生成的风格指令不能超过 2500 字符")
+	}
 	if err := rejectSpeechFields(c.Extra, "model", "text_prompt", "speaker", "references"); err != nil {
 		return err
 	}

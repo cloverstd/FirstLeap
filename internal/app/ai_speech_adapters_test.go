@@ -220,3 +220,19 @@ func TestNativeSpeechRejectsOversizedAndCancelledResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestSeedAudioRejectsOversizedStyleAtSave(t *testing.T) {
+	a := aiFixture(t)
+	c := nativeSpeechConfig("doubao-audio")
+	c.Instructions = strings.Repeat("讲", 2501)
+	if w := aiRequest(t, a, "POST", "/api/settings/ai/providers/tts", map[string]any{"id": "audio", "name": "音频老师", "config": c}); w.Code != 400 || !strings.Contains(w.Body.String(), "2500") {
+		t.Fatalf("oversized style saved: %d %s", w.Code, w.Body.String())
+	}
+	if len(providerView(t, a).Providers.TTS) != 1 {
+		t.Fatal("rejected provider changed settings")
+	}
+	c.Instructions = strings.Repeat("讲", 2500)
+	if err := validateTTS(c); err != nil {
+		t.Fatal("valid style rejected", err)
+	}
+}

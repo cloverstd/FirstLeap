@@ -19,6 +19,11 @@ func TestProviderSingleMutationsAndGlobalPatch(t *testing.T) {
 		configs := map[string]any{"text": defaults.Text, "image": defaults.Image, "tts": defaults.TTS}
 		payload := map[string]any{"id": "new", "name": "新增服务", "config": configs[group]}
 		path := "/api/settings/ai/providers/" + group
+
+		reserved := map[string]any{"id": "default", "name": "保留标识", "config": configs[group]}
+		if w := aiRequest(t, a, "POST", path, reserved); w.Code != 400 {
+			t.Fatalf("reserved provider ID accepted: %d", w.Code)
+		}
 		if w := aiRequest(t, a, "POST", path, payload); w.Code != 200 || strings.Contains(w.Body.String(), "secret-") {
 			t.Fatalf("create: %d %s", w.Code, w.Body.String())
 		}
@@ -101,5 +106,27 @@ func TestProviderRejectsUnknownConfigurationFields(t *testing.T) {
 	w := aiRequest(t, a, "POST", "/api/settings/ai/providers/text", map[string]any{"id": "new", "name": "new", "config": raw})
 	if w.Code != 400 || len(providerView(t, a).Providers.Text) != 1 {
 		t.Fatal("invalid config accepted")
+	}
+}
+
+func TestProviderLegacyReservedIDCanStillBeEdited(t *testing.T) {
+	a := aiFixture(t)
+	c := defaultAISettings()
+	c.ensureProviders()
+	c.Providers.Text[0].ID = "default"
+	c.Providers.Defaults.Text = "default"
+	if w := aiRequest(t, a, "PUT", "/api/settings/ai", c); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	provider := providerView(t, a).Providers.Text[0]
+	provider.Name = "已更新旧服务"
+	if w := aiRequest(t, a, "PUT", "/api/settings/ai/providers/text/default", provider); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if providerView(t, a).Providers.Text[0].Name != provider.Name {
+		t.Fatal("legacy reserved provider cannot be edited")
+	}
+	if w := aiRequest(t, a, "PUT", "/api/settings/ai/providers/text/default", map[string]string{"providerId": "default"}); w.Code != 200 {
+		t.Fatal("default selection no longer works", w.Body.String())
 	}
 }

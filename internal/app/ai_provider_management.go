@@ -45,7 +45,7 @@ func mutateProviders[T any](items *[]aiProvider[T], defaultID *string, request p
 	}
 	if action == "POST" {
 		id = request.ID
-		if !providerIDPattern.MatchString(id) {
+		if !providerIDPattern.MatchString(id) || id == "default" {
 			return 400, fmt.Errorf("Provider 标识无效")
 		}
 		for _, p := range *items {
@@ -123,6 +123,12 @@ func (s *aiService) providerManagementRoutes(mux *http.ServeMux) {
 		if action != "DELETE" && !decodeBody(w, r, &request) {
 			return
 		}
+		id := r.PathValue("id")
+		// Older bulk-settings clients may already have used this reserved ID.
+		// A config object distinguishes editing that provider from selecting a default.
+		if action == "default" && len(request.Config) > 0 {
+			action, id = http.MethodPut, "default"
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		c := copyValue(s.settings)
@@ -132,11 +138,11 @@ func (s *aiService) providerManagementRoutes(mux *http.ServeMux) {
 		var err error
 		switch r.PathValue("group") {
 		case "text":
-			status, err = mutateProviders(&c.Providers.Text, &c.Providers.Defaults.Text, request, action, r.PathValue("id"), defaults.Text)
+			status, err = mutateProviders(&c.Providers.Text, &c.Providers.Defaults.Text, request, action, id, defaults.Text)
 		case "image":
-			status, err = mutateProviders(&c.Providers.Image, &c.Providers.Defaults.Image, request, action, r.PathValue("id"), defaults.Image)
+			status, err = mutateProviders(&c.Providers.Image, &c.Providers.Defaults.Image, request, action, id, defaults.Image)
 		case "tts":
-			status, err = mutateProviders(&c.Providers.TTS, &c.Providers.Defaults.TTS, request, action, r.PathValue("id"), defaults.TTS)
+			status, err = mutateProviders(&c.Providers.TTS, &c.Providers.Defaults.TTS, request, action, id, defaults.TTS)
 		default:
 			failure(w, 400, "不支持的 Provider 类别")
 			return

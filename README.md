@@ -277,7 +277,7 @@ python3 tools/align_textbook_translations.py --data data --model data/textbooks/
 
 豆包默认使用新版控制台 API Key，通过 `X-Api-Key` 鉴权；选择旧版鉴权时填写 App ID，并在密钥栏填写 Access Token，发送 `X-Api-App-Id` 与 `X-Api-Access-Key`。Seed TTS 另发送 `X-Api-Resource-Id`；两种接口均生成独立 UUID 请求 ID。原生豆包接口不调用 `/models`，使用短句试听验证实际合成能力。
 
-系统配置统一保存合成语速（默认 1.0，OpenAI 范围 0.25–4.0，豆包范围 0.5–2.0，映射为原生 `speech_rate`）、音色、MP3/WAV 格式（默认 MP3）、单段超时（默认 300 秒，范围 30–1800 秒）、可选的讲课风格和高级 JSON 参数。风格指令默认不发送，可选择标准 OpenAI 的 `instructions` 或 MLX 的 `instruct`，具体能力以服务商模型为准。高级参数可传语言、参考音频等扩展字段；参考音频须是 TTS 服务可识别的地址或服务端路径，不是浏览器本地路径。OpenAI 高级参数不能覆盖 `model`、`input`、`voice`、`speed`、`response_format`、指令或流式字段。豆包 Seed TTS 高级参数合并到 `req_params`，其中 `additions` 填写 JSON 对象，由应用序列化为原生字符串；Seed Audio 高级参数合并到请求顶层。两者都不能覆盖讲稿、模型、已配置音色、语速和格式，采样率等音频选项可放在 `audio_params`／`audio_config` 对象中。
+系统配置统一保存合成语速（默认 1.0，OpenAI 范围 0.25–4.0，豆包范围 0.5–2.0，映射为原生 `speech_rate`）、音色、MP3/WAV 格式（默认 MP3）、单段超时（默认 300 秒，范围 30–1800 秒）、可选的讲课风格和高级 JSON 参数。风格指令默认不发送，可选择标准 OpenAI 的 `instructions` 或 MLX 的 `instruct`，具体能力以服务商模型为准。高级参数可传语言、参考音频等扩展字段；参考音频须是 TTS 服务可识别的地址或服务端路径，不是浏览器本地路径。OpenAI 高级参数不能覆盖 `model`、`input`、`voice`、`speed`、`response_format`、指令或流式字段。豆包 Seed TTS 高级参数合并到 `req_params`，其中 `additions` 填写 JSON 对象，由应用序列化为原生字符串；Seed Audio 高级参数合并到请求顶层，Seed Audio 风格指令最多 2500 字符，为讲稿和固定提示词预留空间。两者都不能覆盖讲稿、模型、已配置音色、语速和格式，采样率等音频选项可放在 `audio_params`／`audio_config` 对象中。
 
 “生成短句试听”使用当前设置草稿合成一段中英混合例句，无需先保存，会产生一次 TTS 调用；不会调用文字模型或保存试听音频。测试连接仍只检查模型列表，不代替真实试听。
 

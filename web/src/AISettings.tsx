@@ -468,7 +468,9 @@ function TTSSettings({
           hint={
             speech.id === "openai"
               ? "风格指令字段选择不发送时，此项不传给模型。"
-              : "按所选原生接口发送讲课风格指令。"
+              : speech.id === "doubao-audio"
+                ? "按音频生成接口发送朗读风格，最多 2500 字符。"
+                : "按所选原生接口发送讲课风格指令。"
           }
         >
           <textarea
