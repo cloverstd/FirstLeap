@@ -523,6 +523,14 @@ test("TTS settings support manual models, draft preview and persistent private k
   await section.getByLabel("语音高级参数 JSON").fill('{"lang_code":"zh"}');
   await section.getByRole("button", { name: "生成短句试听" }).click();
   await expect(section.getByLabel("语音试听")).toHaveAttribute("src", /^blob:/);
+  const previewURL = await section.getByLabel("语音试听").getAttribute("src");
+  await page
+    .getByLabel("文字 Provider 名称", { exact: true })
+    .fill("主文字服务");
+  await expect(section.getByLabel("语音试听")).toHaveAttribute(
+    "src",
+    previewURL!,
+  );
   expect(speechCalls).toBe(1);
   expect(scriptCalls).toBe(0);
   const speech = modelRequests.find(

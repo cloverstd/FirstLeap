@@ -1,5 +1,6 @@
 import {
   useState,
+  useMemo,
   useEffect,
   useRef,
   cloneElement,
@@ -577,6 +578,10 @@ function SettingsForm({
     tts: form.providers.tts.find((p) => p.id === selected.tts)!.config,
   };
   const { text, image, tts } = configs;
+  const ttsValue = useMemo(
+    () => ({ ...tts, enabled: form.tts.enabled }),
+    [tts, form.tts.enabled],
+  );
   const extraText =
     extraDrafts[selected.tts] ?? JSON.stringify(tts.extra || {}, null, 2);
   const model = (group: ProviderGroup, key: string, value: unknown) =>
@@ -853,7 +858,7 @@ function SettingsForm({
         <TTSSettings
           key={selected.tts}
           providerId={selected.tts}
-          value={{ ...tts, enabled: form.tts.enabled }}
+          value={ttsValue}
           change={(key, value) => model("tts", key, value)}
           disabled={busy}
           extraText={extraText}
