@@ -1451,7 +1451,7 @@ function ReadingRoom({
                 </span>
               </div>
               <p className="mb-2 text-xs leading-6 text-muted-foreground">
-                英美音标 · 多义解释与例句 · 词形与扩展用法
+                基础释义默认展开 · AI 拓展按需生成并缓存
               </p>
               <div className="vocabulary-list">
                 {lesson.vocabulary.map((word) => (

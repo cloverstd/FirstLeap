@@ -33,12 +33,18 @@ func TestVocabularyGenerationCacheAndProtocols(t *testing.T) {
 			if err := writeJSONAtomic(filepath.Join(a.libraryRoot(), "book1", "001.json"), l); err != nil {
 				t.Fatal(err)
 			}
+			a.cfg.DictionaryRoot = dictionaryFixture(t, dictionaryEntry{Word: "experience", Translations: []string{"词典基础：经验；经历"}})
+			a.dictionary, _ = newDictionaryStore(a.cfg.DictionaryRoot)
 			var calls atomic.Int32
 			release := make(chan struct{})
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				var body map[string]any
 				_ = json.NewDecoder(r.Body).Decode(&body)
+				serialized, _ := json.Marshal(body)
+				if !strings.Contains(string(serialized), "词典基础：经验；经历") {
+					t.Error("AI expansion did not receive the basic dictionary entry")
+				}
 				if body["stream"] != false || body["tools"] != nil {
 					t.Error("dictionary generation must be structured and independent of learner tools")
 				}

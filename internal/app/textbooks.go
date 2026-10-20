@@ -49,6 +49,7 @@ type TextVocabulary struct {
 	Meaning         string             `json:"meaning"`
 	PronunciationID string             `json:"pronunciationId"`
 	Ready           bool               `json:"ready"`
+	Dictionary      *dictionaryEntry   `json:"dictionary,omitempty"`
 	Details         *vocabularyDetails `json:"details,omitempty"`
 }
 type TextLesson struct {
@@ -183,6 +184,7 @@ func (a *App) textLesson(book, n int) (TextLesson, error) {
 	}
 	l.LectureLessonID = a.lectureFor(book, n)
 	for i := range l.Vocabulary {
+		l.Vocabulary[i].Dictionary = a.dictionary.lookup(l.Vocabulary[i].Word)
 		l.Vocabulary[i].Details = a.ai.readVocabulary(l.Vocabulary[i])
 		l.Vocabulary[i].Ready = false
 		id := l.Vocabulary[i].PronunciationID

@@ -19,7 +19,7 @@ export const test = base.extend({
     await page.route("**/vocabulary/*/details", (route) =>
       route.fulfill({
         status: 409,
-        json: { error: "请先在系统配置中设置文字模型，再补全单词词条" },
+        json: { error: "请先在系统配置中设置文字模型，再生成 AI 拓展" },
       }),
     );
     await use(page);
