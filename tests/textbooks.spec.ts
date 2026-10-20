@@ -917,6 +917,7 @@ test("classroom theme has no horizontal overflow and keeps the audio dock usable
       page.getByRole("button", { name: "播放精听", exact: true }),
       page.getByRole("slider", { name: "课文音频进度" }),
       page.getByRole("button", { name: "循环模式", exact: true }),
+      page.getByRole("switch", { name: "影子跟读" }),
       page.getByRole("combobox", { name: "精听倍速" }),
       page.getByRole("button", { name: "播放器设置", exact: true }),
     ];
@@ -1082,9 +1083,13 @@ for (const mode of ["sentence", "paragraph"] as const) {
     await page.goto("/books/1/lessons/1");
     await loaded(page);
     if (mode === "paragraph") {
-      await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+      await page
+        .getByRole("button", { name: "播放器设置", exact: true })
+        .click();
       await page.getByRole("tab", { name: "段落起点", exact: true }).click();
-      await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+      await page
+        .getByRole("button", { name: "播放器设置", exact: true })
+        .click();
     }
     const target = (index: number) =>
       page.locator(
@@ -1456,4 +1461,443 @@ test("modal verbs explain missing forms without inventing participles", async ({
   await expect(
     entry.getByRole("region", { name: "动词变形" }).locator("dt"),
   ).toHaveText(["原形"]);
+});
+
+async function shadowReady(
+  page: Page,
+  mode: "sentence" | "paragraph" = "sentence",
+  path = "/books/1/lessons/1",
+) {
+  await page.addInitScript((mode) => {
+    localStorage.setItem(
+      "firstleap.shadow-reading.v1",
+      JSON.stringify({ enabled: true, mode }),
+    );
+  }, mode);
+  await page.goto(path);
+  if (path.startsWith("/learn/"))
+    await page.getByRole("button", { name: "课文精听", exact: true }).click();
+  await loaded(page);
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "2×", exact: true }).click();
+}
+
+async function approachShadowBoundary(page: Page, time = 4.8) {
+  const audio = page.getByTestId("textbook-audio");
+  await audio.evaluate((a: HTMLAudioElement, time) => {
+    a.currentTime = time;
+  }, time);
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+  await expect(audio).toHaveJSProperty("paused", true);
+}
+
+test("shadow reading pauses at sentence boundaries, holds the previous highlight and scales with speed", async ({
+  page,
+}) => {
+  await shadowReady(page);
+  await approachShadowBoundary(page);
+  const audio = page.getByTestId("textbook-audio");
+  const started = Date.now();
+  await expect(audio).toHaveJSProperty("currentTime", 5);
+  await expect(page.locator(".reading-sentence").first()).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(page.locator(".reading-shadow-status")).toContainText("请跟读");
+  await page.waitForTimeout(200);
+  await expect(audio).toHaveJSProperty("currentTime", 5);
+  // An existing turn keeps the speed with which its audio was heard.
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "0.5×", exact: true }).click();
+  await expect(audio).toHaveJSProperty("paused", false);
+  expect(Date.now() - started).toBeLessThan(4000);
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "2×", exact: true }).click();
+  await audio.evaluate((a: HTMLAudioElement) => {
+    a.currentTime = 6.6;
+  });
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+  await expect(audio).toHaveJSProperty("currentTime", 6.8);
+  await expect(page.locator(".reading-sentence").nth(1)).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(audio).toHaveJSProperty("paused", false);
+  // The outro does not produce another follow-along turn.
+  await expect(audio).toHaveJSProperty("ended", true);
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "第一册第1课，标记未学", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("shadow paragraph mode is independent of markers and preferences survive refresh and lesson changes", async ({
+  page,
+}) => {
+  await page.route("**/api/books/1/lessons/3", (route) =>
+    route.fulfill({ json: { ...detail, lesson: 3 } }),
+  );
+  await page.goto("/books/1/lessons/1");
+  await loaded(page);
+  const toggle = page.getByRole("switch", { name: "影子跟读" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+  await page.getByRole("tab", { name: "逐段跟读", exact: true }).click();
+  await expect(
+    page.getByRole("tab", { name: "句子起点", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await loaded(page);
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(toggle).toHaveAttribute("title", "影子跟读：逐段");
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "2×", exact: true }).click();
+  await page.locator("audio").evaluate((a: HTMLAudioElement) => {
+    a.currentTime = 4.8;
+  });
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
+    )
+    .toBeGreaterThan(5.2);
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 6.8);
+  await expect(page.locator(".reading-paragraph")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await page.goto("/books/1/lessons/3");
+  await loaded(page);
+  await expect(toggle).toHaveAttribute("title", "影子跟读：逐段");
+  await page.waitForTimeout(2600);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+});
+
+test("shadow whole-lesson loop waits after the final body segment before returning to the beginning", async ({
+  page,
+}) => {
+  await shadowReady(page);
+  await page.getByRole("button", { name: "循环模式" }).click();
+  await page
+    .getByRole("menuitemradio", { name: "整课循环", exact: true })
+    .click();
+  await approachShadowBoundary(page, 6.6);
+  const audio = page.getByTestId("textbook-audio");
+  await expect(audio).toHaveJSProperty("currentTime", 6.8);
+  await page.waitForTimeout(300);
+  await expect(audio).toHaveJSProperty("currentTime", 6.8);
+  await expect(audio).toHaveJSProperty("paused", false);
+  const time = await audio.evaluate((a: HTMLAudioElement) => a.currentTime);
+  expect(time).toBeGreaterThanOrEqual(2);
+  expect(time).toBeLessThan(3.5);
+  await expect(audio).toHaveJSProperty("playbackRate", 2);
+  await expect(
+    page.getByRole("button", { name: "第一册第1课，标记未学", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
+for (const kind of ["sentence", "word", "vocabulary"] as const) {
+  for (const repeat of [false, true]) {
+    test(`shadow ${kind} point reading ${repeat ? "repeats after" : "ends after"} an equal-duration turn`, async ({
+      page,
+    }) => {
+      await shadowReady(page);
+      if (kind !== "sentence") {
+        await page.getByRole("combobox", { name: "精听倍速" }).click();
+        await page.getByRole("option", { name: "0.5×", exact: true }).click();
+      }
+      await page
+        .getByTestId("textbook-audio")
+        .evaluate((a: HTMLAudioElement) => {
+          a.addEventListener(
+            "ended",
+            () => {
+              a.dataset.shadowEndedAt = String(performance.now());
+            },
+            { once: true },
+          );
+          let seen = false;
+          const observer = new MutationObserver(() => {
+            if (document.querySelector(".reading-shadow-status")) seen = true;
+            else if (seen) {
+              a.dataset.shadowFinishedAt = String(performance.now());
+              observer.disconnect();
+            }
+          });
+          observer.observe(document.querySelector(".reading-dock")!, {
+            childList: true,
+            subtree: true,
+          });
+        });
+      if (repeat) {
+        await page.getByRole("button", { name: "循环模式" }).click();
+        await page
+          .getByRole("menuitemradio", { name: "选中内容循环", exact: true })
+          .click();
+      }
+      if (kind === "sentence") {
+        await page
+          .getByRole("button", {
+            name: "点读句子：Is this your handbag?",
+            exact: true,
+          })
+          .first()
+          .click();
+      } else if (kind === "word") {
+        await page
+          .getByRole("button", { name: "点读单词：handbag?", exact: true })
+          .first()
+          .click();
+      } else {
+        await page.getByRole("tab", { name: "单词 · 1" }).click();
+        await page.getByRole("button", { name: "生词发音：handbag" }).click();
+      }
+      await loaded(page);
+      const audio = page.getByTestId("textbook-audio");
+      await expect(page.locator(".reading-shadow-status")).toBeVisible();
+      const duration = await audio.evaluate(
+        (a: HTMLAudioElement) => a.duration,
+      );
+      await expect(audio).toHaveJSProperty("paused", true);
+      await expect(
+        page.getByRole("button", { name: "暂停精听", exact: true }),
+      ).toBeVisible();
+      if (kind === "word")
+        await expect(page.locator(".reading-word.current-word")).toHaveCount(1);
+      if (repeat) {
+        await expect(audio).toHaveJSProperty("paused", false);
+      } else {
+        await expect(
+          page.getByRole("button", { name: "播放精听", exact: true }),
+        ).toBeVisible();
+        await expect(audio).toHaveJSProperty("paused", true);
+        await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+      }
+      const elapsed = await audio.evaluate(
+        (a: HTMLAudioElement) =>
+          Number(a.dataset.shadowFinishedAt) - Number(a.dataset.shadowEndedAt),
+      );
+      expect(elapsed).toBeGreaterThan(
+        duration * (kind === "sentence" ? 500 : 2000) - 80,
+      );
+      await expect(
+        page.getByRole("button", {
+          name: "第一册第1课，标记已学",
+          exact: true,
+        }),
+      ).toHaveAttribute("aria-pressed", "false");
+    });
+  }
+}
+
+test("manual pause cancels a shadow turn and resuming skips its remaining wait", async ({
+  page,
+}) => {
+  await shadowReady(page);
+  await approachShadowBoundary(page);
+  await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+  await page.waitForTimeout(1700);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 5);
+  await page.getByRole("region", { name: "课文精听", exact: true }).focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("audio")).toHaveJSProperty("paused", false);
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+});
+
+test("disabling shadow reading during a turn immediately continues and cancels old callbacks", async ({
+  page,
+}) => {
+  await shadowReady(page);
+  await approachShadowBoundary(page);
+  await page.getByRole("switch", { name: "影子跟读" }).click();
+  await expect(page.locator("audio")).toHaveJSProperty("paused", false);
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.locator("audio").evaluate((a: HTMLAudioElement) => a.currentTime),
+    )
+    .toBeGreaterThan(7);
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+});
+
+test("changing shadow granularity resumes immediately without letting an old turn end the next turn", async ({
+  page,
+}) => {
+  await shadowReady(page);
+  await approachShadowBoundary(page);
+  await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+  await page.getByRole("tab", { name: "逐段跟读", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("audio")).toHaveJSProperty("paused", false);
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 6.8);
+  await page.waitForTimeout(1600);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await expect(page.locator(".reading-paragraph")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+});
+
+for (const action of ["seek", "other media", "error", "new clip"] as const) {
+  test(`shadow wait is cancelled by ${action}`, async ({ page }) => {
+    await shadowReady(page);
+    await approachShadowBoundary(page);
+    if (action === "seek") {
+      await selectMarker(page, /^课文结束/);
+    } else if (action === "other media") {
+      await page.evaluate(() => {
+        const video = document.createElement("video");
+        document.body.append(video);
+        window.dispatchEvent(
+          new CustomEvent("firstleap:media", { detail: video }),
+        );
+      });
+    } else if (action === "error") {
+      await page.locator("audio").dispatchEvent("error");
+    } else {
+      await page
+        .getByRole("button", {
+          name: "点读句子：Is this your handbag?",
+          exact: true,
+        })
+        .first()
+        .click();
+      await loaded(page);
+    }
+    if (action === "seek" || action === "new clip") {
+      await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+    }
+    await page.waitForTimeout(1800);
+    await expect(page.getByTestId("textbook-audio")).toHaveJSProperty(
+      "paused",
+      true,
+    );
+    await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+  });
+}
+
+test("embedded textbook player supports shadow reading and missing timings still allow word turns", async ({
+  page,
+}) => {
+  await shadowReady(page, "sentence", "/learn/lesson1");
+  await approachShadowBoundary(page);
+  await expect(page.getByTestId("textbook-audio")).toHaveJSProperty(
+    "currentTime",
+    5,
+  );
+  await page.goto("/books/1/lessons/1");
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        paragraphs: [
+          {
+            id: "p0",
+            sentences: [{ ...sentence("s1", 2), start: null, end: null }],
+          },
+        ],
+      },
+    }),
+  );
+  await page.reload();
+  await loaded(page);
+  await expect(
+    page.getByRole("status").filter({ hasText: "本课缺少有效的句段时间" }),
+  ).toBeVisible();
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "0.5×", exact: true }).click();
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  await page.getByRole("button", { name: "生词发音：handbag" }).click();
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+});
+
+test("shadow final turn completes once when the body and audio end together", async ({
+  page,
+}) => {
+  await page.route("**/api/books/1/lessons/1", (route) =>
+    route.fulfill({
+      json: {
+        ...detail,
+        duration: 1.8,
+        paragraphs: [
+          {
+            id: "p0",
+            sentences: [
+              { ...sentence("s1", 0), end: 0.9 },
+              { ...sentence("s2", 0.9), end: 1.8 },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/books/1/lessons/1/audio", (route) => {
+    const range = route
+      .request()
+      .headers()
+      .range?.match(/bytes=(\d+)-(\d*)/);
+    if (!range)
+      return route.fulfill({ body: sentenceClip, contentType: "audio/wav" });
+    const start = Number(range[1]);
+    const end = Math.min(
+      Number(range[2] || sentenceClip.length - 1),
+      sentenceClip.length - 1,
+    );
+    return route.fulfill({
+      status: 206,
+      contentType: "audio/wav",
+      body: sentenceClip.subarray(start, end + 1),
+      headers: {
+        "Accept-Ranges": "bytes",
+        "Content-Range": `bytes ${start}-${end}/${sentenceClip.length}`,
+      },
+    });
+  });
+  await shadowReady(page);
+  await page.getByRole("combobox", { name: "精听倍速" }).click();
+  await page.getByRole("option", { name: "1×", exact: true }).click();
+  await page.getByRole("button", { name: "播放精听", exact: true }).click();
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 0.9);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", false);
+  await expect(page.locator(".reading-shadow-status")).toBeVisible();
+  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 1.8);
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await expect(
+    page.getByRole("button", { name: "暂停精听", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".reading-sentence").nth(1)).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(
+    page.getByRole("button", { name: "播放精听", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+});
+
+test("shadow continuation reports a rejected playback request and does not restart later", async ({
+  page,
+}) => {
+  await shadowReady(page);
+  await approachShadowBoundary(page);
+  await page.locator("audio").evaluate((a: HTMLAudioElement) => {
+    a.play = () =>
+      Promise.reject(new DOMException("Blocked", "NotAllowedError"));
+  });
+  await expect(page.getByRole("alert")).toContainText("播放未能开始");
+  await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "播放精听", exact: true }),
+  ).toBeVisible();
 });

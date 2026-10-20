@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Download,
   Headphones,
+  Mic,
   Languages,
   LocateFixed,
   Pause,
@@ -73,6 +74,13 @@ import {
   markerAtPosition,
   type AudioMarker,
 } from "./textbookMarkers";
+import {
+  shadowDelay,
+  shadowSegments,
+  useShadowReading,
+  type ShadowSegment,
+  type ShadowSettings,
+} from "./shadowReading";
 
 export type TextWord = {
   id: string;
@@ -706,6 +714,15 @@ function ReadingRoom({
     () => new Set(),
   );
   const [focusedMarker, setFocusedMarker] = useState<AudioMarker | null>(null);
+  const shadow = useShadowReading();
+  const segments = useMemo(
+    () =>
+      shadowSegments(lesson.paragraphs, shadow.settings.mode, lesson.duration),
+    [lesson.paragraphs, shadow.settings.mode, lesson.duration],
+  );
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
+  const nextShadow = useRef<ShadowSegment | undefined>(undefined);
   const markers = useMemo(
     () => buildMarkers(lesson.paragraphs, record.markerMode, lesson.duration),
     [lesson.paragraphs, record.markerMode, lesson.duration],
@@ -715,27 +732,32 @@ function ReadingRoom({
     [lesson.paragraphs, lesson.duration],
   );
   const anchor =
-    focusedMarker &&
+    shadow.turn?.marker ||
+    (focusedMarker &&
     !playing &&
     focusedMarker.mode === record.markerMode &&
     Math.abs(position - focusedMarker.time) < 0.1
       ? focusedMarker
-      : markerAtPosition(markers, position);
+      : markerAtPosition(markers, position));
   const sentences = lesson.paragraphs.flatMap((p) => p.sentences);
+  const displayPosition = shadow.turn?.position ?? position;
   const current = sentences.find(
     (s) =>
       s.start !== null &&
       s.end !== null &&
-      position >= s.start &&
-      position < s.end,
+      displayPosition >= s.start &&
+      displayPosition < s.end,
   );
-  const currentWord = current?.words.find(
-    (w) =>
-      w.start !== null &&
-      w.end !== null &&
-      position >= w.start &&
-      position < w.end,
-  );
+  const currentWord =
+    shadow.turn && kind === "word"
+      ? sentences.flatMap((s) => s.words).find((w) => w.id === selected)
+      : current?.words.find(
+          (w) =>
+            w.start !== null &&
+            w.end !== null &&
+            displayPosition >= w.start &&
+            displayPosition < w.end,
+        );
   const currentRef = useRef(current?.id || initial.sentence);
   currentRef.current =
     (anchor?.mode === "sentence" ? anchor.targetId : current?.id) ||
@@ -769,10 +791,16 @@ function ReadingRoom({
     if (repeatTimer.current !== null) clearTimeout(repeatTimer.current);
     repeatTimer.current = null;
   };
+  const armShadow = (time: number) => {
+    nextShadow.current = segmentsRef.current.find(
+      (segment) => segment.end > time + 0.001,
+    );
+  };
   const stop = () => {
     playIntent.current = false;
     generation.current++;
     clearRepeat();
+    shadow.cancel();
     audio.current?.pause();
     setRunning(false);
     setPlaying(false);
@@ -793,6 +821,7 @@ function ReadingRoom({
         persist(true);
       }
     }
+    if (shadow.waiting.current) shadow.finish();
   };
   const play = () => {
     interacted.current = true;
@@ -811,6 +840,7 @@ function ReadingRoom({
       setPosition(loopRange.start);
       if (media.readyState >= 1) media.currentTime = loopRange.start;
     }
+    if (source.current.kind === "full") armShadow(media.currentTime);
     playIntent.current = true;
     setRunning(true);
     claimMedia(media);
@@ -821,6 +851,7 @@ function ReadingRoom({
         playIntent.current &&
         e.name !== "AbortError"
       ) {
+        shadow.cancel();
         playIntent.current = false;
         setRunning(false);
         setPlaying(false);
@@ -832,6 +863,7 @@ function ReadingRoom({
     interacted.current = true;
     const media = audio.current;
     if (!media) return;
+    shadow.cancel();
     if (
       source.current.kind === "full" &&
       media.readyState >= 1 &&
@@ -882,12 +914,55 @@ function ReadingRoom({
     save({ completed: true });
     fullPosition.current = loopRange.start;
     media.currentTime = loopRange.start;
+    armShadow(loopRange.start);
     setPosition(loopRange.start);
     persist(true);
     if (media.paused) play();
   };
+  const completeFull = () => {
+    fullPosition.current = lesson.duration;
+    save({ completed: true });
+    persist(true);
+    playIntent.current = false;
+    setRunning(false);
+    setPlaying(false);
+  };
+  const continueFull = () => {
+    const media = audio.current;
+    if (!media || !playIntent.current) return;
+    if (
+      loopRef.current === "lesson" &&
+      loopRange &&
+      media.currentTime >= loopRange.end
+    )
+      repeatLesson();
+    else if (media.ended || media.currentTime >= media.duration) completeFull();
+    else play();
+  };
+  const continueClip = () => {
+    const media = audio.current;
+    if (!media || !playIntent.current) return;
+    if (loopRef.current === "selection") {
+      media.currentTime = 0;
+      play();
+    } else {
+      playIntent.current = false;
+      setRunning(false);
+    }
+  };
+  const configureShadow = (next: ShadowSettings) => {
+    shadow.configure(next);
+    segmentsRef.current = shadowSegments(
+      lesson.paragraphs,
+      next.mode,
+      lesson.duration,
+    );
+    armShadow(audio.current?.currentTime || 0);
+    shadow.finish();
+  };
   const tick = () => {
     const media = audio.current;
+    if (shadow.waiting.current) return true;
     if (
       !media ||
       media.readyState < 1 ||
@@ -895,6 +970,40 @@ function ReadingRoom({
       media.currentSrc !== new URL(source.current.url, location.href).href
     )
       return;
+    const segment = nextShadow.current;
+    if (
+      source.current.kind === "full" &&
+      shadow.settingsRef.current.enabled &&
+      segment &&
+      playIntent.current &&
+      !manualEnd.current &&
+      !media.seeking &&
+      (!media.paused || media.ended) &&
+      media.currentTime >= segment.end
+    ) {
+      armShadow(segment.end);
+      fullPosition.current = segment.end;
+      setPosition(segment.end);
+      // Register the wait before pause emits its event, preserving play intent.
+      shadow.wait(
+        shadowDelay(segment.end - segment.start, rateRef.current),
+        continueFull,
+        segment.end - 0.001,
+        segment.marker,
+      );
+      media.pause();
+      setPlaying(false);
+      if (Math.abs(media.currentTime - segment.end) > 0.001)
+        media.currentTime = segment.end;
+      if (
+        loopRef.current === "lesson" &&
+        loopRange &&
+        segment.end >= loopRange.end
+      )
+        save({ completed: true });
+      persist(true);
+      return true;
+    }
     if (
       source.current.kind === "full" &&
       loopRef.current === "lesson" &&
@@ -904,7 +1013,7 @@ function ReadingRoom({
       media.currentTime >= loopRange.end
     ) {
       repeatLesson();
-      return;
+      return true;
     }
     setPosition(source.current.offset + media.currentTime);
     if (source.current.kind === "full") {
@@ -924,6 +1033,8 @@ function ReadingRoom({
         id: sentence.id,
       });
   };
+  const tickRef = useRef(tick);
+  tickRef.current = tick;
   const move = (direction: number) => {
     if (firstIndex < 0 && direction < 0) return;
     const next = sentences[firstIndex + direction];
@@ -1006,6 +1117,7 @@ function ReadingRoom({
       playIntent.current = false;
       generation.current++;
       clearRepeat();
+      shadow.cancel();
       persist(true);
       media.pause();
       media.removeAttribute("src");
@@ -1019,7 +1131,7 @@ function ReadingRoom({
     if (!playing) return;
     let frame = 0;
     const update = () => {
-      tick();
+      tickRef.current();
       frame = requestAnimationFrame(update);
     };
     frame = requestAnimationFrame(update);
@@ -1072,27 +1184,36 @@ function ReadingRoom({
   const onEnded = () => {
     const media = audio.current;
     if (!media?.ended || !playIntent.current) return;
-    if (
-      source.current.kind === "full" &&
-      loopRef.current === "lesson" &&
-      loopRange &&
-      !manualEnd.current
-    ) {
-      repeatLesson();
-      return;
-    }
     setPlaying(false);
-    tick();
+    if (tick()) return;
     if (manualEnd.current) {
       stop();
       return;
     }
     if (source.current.kind === "full") {
-      fullPosition.current = lesson.duration;
-      save({ completed: true });
-      persist(true);
-      playIntent.current = false;
-      setRunning(false);
+      completeFull();
+      return;
+    }
+    if (
+      shadow.settingsRef.current.enabled &&
+      shadowDelay(media.duration, rateRef.current)
+    ) {
+      const sentence = sentences.find(
+        (s) =>
+          s.id === source.current.id ||
+          s.words.some((w) => w.id === source.current.id),
+      );
+      const marker = sentence
+        ? buildMarkers(lesson.paragraphs, "sentence", lesson.duration).find(
+            (m) => m.targetId === sentence.id,
+          )
+        : undefined;
+      shadow.wait(
+        shadowDelay(media.duration, rateRef.current),
+        continueClip,
+        source.current.offset + media.duration - 0.001,
+        marker,
+      );
       return;
     }
     if (loopRef.current !== "selection") {
@@ -1166,12 +1287,13 @@ function ReadingRoom({
               fullPosition.current,
               media.duration || lesson.duration,
             );
+            armShadow(media.currentTime);
             persist(true);
           }
           setError("");
         }}
         onPlay={() => {
-          if (!playIntent.current) {
+          if (!playIntent.current || shadow.waiting.current) {
             audio.current?.pause();
             return;
           }
@@ -1183,7 +1305,7 @@ function ReadingRoom({
           const media = audio.current!;
           if (!media.paused || switching.current) return;
           setPlaying(false);
-          if (!media.ended) {
+          if (!media.ended && !shadow.waiting.current) {
             playIntent.current = false;
             setRunning(false);
             clearRepeat();
@@ -1198,6 +1320,10 @@ function ReadingRoom({
           }
         }}
         onTimeUpdate={tick}
+        onSeeking={() => {
+          if (source.current.kind === "full")
+            armShadow(audio.current!.currentTime);
+        }}
         onSeeked={tick}
         onEnded={onEnded}
         onError={() => {
@@ -1490,10 +1616,10 @@ function ReadingRoom({
         </TabsContent>
       </Tabs>
       <div className="reading-dock sticky bottom-3 z-20 mt-6 rounded-xl border border-primary/15 bg-card/95 px-2 py-1 shadow-lg backdrop-blur-md">
-        <div className="reading-controls flex items-center gap-1 sm:gap-2">
+        <div className="reading-controls flex items-center gap-0.5 sm:gap-2">
           <Button
             size="icon"
-            className="reading-play-toggle size-10 shrink-0 rounded-full"
+            className="reading-play-toggle size-9 shrink-0 rounded-full sm:size-10"
             aria-label={running ? "暂停精听" : "播放精听"}
             onClick={toggle}
           >
@@ -1564,6 +1690,27 @@ function ReadingRoom({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            variant={shadow.settings.enabled ? "secondary" : "ghost"}
+            size="icon"
+            className="size-9 shrink-0"
+            role="switch"
+            aria-label="影子跟读"
+            aria-checked={shadow.settings.enabled}
+            title={
+              shadow.settings.enabled
+                ? `影子跟读：${shadow.settings.mode === "sentence" ? "逐句" : "逐段"}`
+                : "开启影子跟读"
+            }
+            onClick={() =>
+              configureShadow({
+                ...shadow.settings,
+                enabled: !shadow.settings.enabled,
+              })
+            }
+          >
+            <Mic className="size-4" />
+          </Button>
           <Select
             value={String(rate)}
             onValueChange={(value) => {
@@ -1580,7 +1727,7 @@ function ReadingRoom({
               title="精听倍速"
               className={cn(
                 buttonVariants({ variant: "ghost", size: "sm" }),
-                "h-9 w-12 shrink-0 justify-center gap-0 border-0 bg-transparent px-1 text-xs tabular-nums shadow-none",
+                "h-9 w-10 shrink-0 justify-center gap-0 border-0 bg-transparent px-1 text-xs tabular-nums shadow-none sm:w-12",
               )}
             >
               <SelectValue />
@@ -1597,7 +1744,7 @@ function ReadingRoom({
             <Button
               variant="ghost"
               size="icon"
-              className="size-9 shrink-0"
+              className="size-9 shrink-0 max-[360px]:absolute max-[360px]:-top-11 max-[360px]:right-0 max-[360px]:rounded-full max-[360px]:border max-[360px]:bg-card max-[360px]:shadow-sm"
               aria-label="回到当前句"
               title="回到当前句并恢复跟随"
               onClick={() => {
@@ -1619,6 +1766,31 @@ function ReadingRoom({
           >
             {(close) => (
               <>
+                <div className="space-y-2 border-b pb-3">
+                  <p className="text-xs font-semibold">影子跟读</p>
+                  <Tabs
+                    aria-label="跟读分段"
+                    value={shadow.settings.mode}
+                    onValueChange={(mode) =>
+                      configureShadow({
+                        ...shadow.settings,
+                        mode: mode as MarkerMode,
+                      })
+                    }
+                  >
+                    <TabsList className="w-full" aria-label="跟读分段">
+                      <TabsTrigger value="sentence" className="flex-1 text-xs">
+                        逐句跟读
+                      </TabsTrigger>
+                      <TabsTrigger value="paragraph" className="flex-1 text-xs">
+                        逐段跟读
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    每段播放后留出同样时长跟读，停顿随倍速变化。
+                  </p>
+                </div>
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Headphones className="size-3.5" />
                   {kind === "full"
@@ -1687,6 +1859,20 @@ function ReadingRoom({
             )}
           </TextbookPlayerSettings>
         </div>
+        {shadow.turn && (
+          <p
+            className="reading-shadow-status mt-1 pb-1 text-center text-xs text-primary"
+            role="status"
+          >
+            请跟读 · 剩余{" "}
+            <span className="tabular-nums">{shadow.remaining}</span> 秒
+          </p>
+        )}
+        {shadow.settings.enabled && kind === "full" && !segments.length && (
+          <p className="mt-1 pb-1 text-xs text-muted-foreground" role="status">
+            本课缺少有效的句段时间，暂不能分段跟读；单词跟读仍可使用。
+          </p>
+        )}
         {error && (
           <div
             role="alert"
