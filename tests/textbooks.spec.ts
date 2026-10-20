@@ -1051,6 +1051,102 @@ test("playback centers the highlighted sentence as it reaches each boundary", as
   await page.getByRole("button", { name: "暂停精听", exact: true }).click();
 });
 
+for (const mode of ["sentence", "paragraph"] as const) {
+  test(`${mode} following recovers after browsing, playback and returning to the current anchor`, async ({
+    page,
+    isMobile,
+  }) => {
+    await page.setViewportSize(
+      isMobile ? { width: 390, height: 844 } : { width: 1920, height: 1080 },
+    );
+    const notes = (prefix: string) =>
+      Array.from({ length: 18 }, (_, i) => ({
+        id: `${prefix}-${i}`,
+        note: `Reading note ${i + 1}`,
+        sentences: [],
+      }));
+    await page.route("**/api/books/1/lessons/1", (route) =>
+      route.fulfill({
+        json: {
+          ...detail,
+          paragraphs: [
+            { id: "p1", sentences: [sentence("s1", 1)] },
+            ...notes("before"),
+            { id: "p2", sentences: [sentence("s2", 4)] },
+            ...notes("between"),
+            { id: "p3", sentences: [sentence("s3", 7)] },
+          ],
+        },
+      }),
+    );
+    await page.goto("/books/1/lessons/1");
+    await loaded(page);
+    if (mode === "paragraph") {
+      await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+      await page.getByRole("tab", { name: "段落起点", exact: true }).click();
+      await page.getByRole("button", { name: "播放器设置", exact: true }).click();
+    }
+    const target = (index: number) =>
+      page.locator(
+        `[id="reading-1:1-${mode === "paragraph" ? "paragraph-p" : "s"}${index}"]`,
+      );
+    const distance = (index: number) =>
+      target(index).evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2);
+      });
+    const browse = async (index: number) => {
+      const box = await target(index).boundingBox();
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      await page.mouse.wheel(0, -400);
+      await expect.poll(() => distance(index)).toBeGreaterThan(100);
+    };
+    await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
+      audio.currentTime = 4.05;
+      audio.playbackRate = 0.5;
+    });
+    await expect(target(2)).toHaveAttribute("aria-current", "true");
+    await expect.poll(() => distance(2)).toBeLessThan(2);
+
+    // Scrolling before starting playback must not permanently disable following.
+    await browse(2);
+    await page.getByRole("button", { name: "播放精听", exact: true }).click();
+    await expect.poll(() => distance(2)).toBeLessThan(2);
+
+    // Browsing during playback only suspends following for the current anchor.
+    await browse(2);
+    await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
+      audio.currentTime = 7.05;
+    });
+    await expect(target(3)).toHaveAttribute("aria-current", "true");
+    await expect.poll(() => distance(3)).toBeLessThan(2);
+    await page.getByRole("button", { name: "暂停精听", exact: true }).click();
+
+    // Revisiting the browsed anchor (for example in a loop) must still follow.
+    await page.locator("audio").evaluate((audio: HTMLAudioElement) => {
+      audio.currentTime = 4.05;
+    });
+    await expect.poll(() => distance(2)).toBeLessThan(2);
+
+    // The dock exposes recovery while paused without opening the settings.
+    await browse(2);
+    const back = page.getByRole("button", { name: "回到当前句", exact: true });
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect.poll(() => distance(2)).toBeLessThan(2);
+    await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+    await expect(back).toHaveCount(0);
+
+    await page.getByRole("tab", { name: "单词 · 1", exact: true }).click();
+    await back.click();
+    await expect(
+      page.getByRole("tab", { name: "课文", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => distance(2)).toBeLessThan(2);
+    await expect(page.locator("audio")).toHaveJSProperty("paused", true);
+  });
+}
+
 test("inline markers and dragging synchronize passage anchors without starting audio", async ({
   page,
 }) => {
