@@ -21,6 +21,7 @@ import {
   Download,
   Headphones,
   Languages,
+  LocateFixed,
   Pause,
   Play,
   Repeat,
@@ -797,6 +798,7 @@ function ReadingRoom({
     interacted.current = true;
     const media = audio.current;
     if (!media) return;
+    setFollow(true);
     manualEnd.current = false;
     if (
       loopRef.current === "lesson" &&
@@ -1023,6 +1025,10 @@ function ReadingRoom({
     frame = requestAnimationFrame(update);
     return () => cancelAnimationFrame(frame);
   }, [playing]);
+  useEffect(() => {
+    // Manual browsing suspends following only until playback reaches a new anchor.
+    setFollow(true);
+  }, [anchor?.targetId, anchor?.mode]);
   useEffect(() => {
     if (!follow || !anchor || tab !== "passage") return;
     // Tabs mounts the passage through Radix Presence. Wait for that layout
@@ -1587,6 +1593,21 @@ function ReadingRoom({
               ))}
             </SelectContent>
           </Select>
+          {(!follow || tab !== "passage") && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9 shrink-0"
+              aria-label="回到当前句"
+              title="回到当前句并恢复跟随"
+              onClick={() => {
+                setTab("passage");
+                setFollow(true);
+              }}
+            >
+              <LocateFixed className="size-4" />
+            </Button>
+          )}
           <TextbookPlayerSettings
             markers={markers}
             mode={record.markerMode}
@@ -1662,27 +1683,6 @@ function ReadingRoom({
                     <ChevronRight className="size-4" />
                   </Button>
                 </div>
-                {(!follow || tab !== "passage") && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-xs"
-                    onClick={() => {
-                      setTab("passage");
-                      setFollow(true);
-                      close();
-                      setTimeout(
-                        () =>
-                          centerReadingAnchor(
-                            `reading-${key}-${anchor?.mode === "paragraph" ? "paragraph-" : ""}${anchor?.targetId || currentRef.current}`,
-                          ),
-                        0,
-                      );
-                    }}
-                  >
-                    回到当前句
-                  </Button>
-                )}
               </>
             )}
           </TextbookPlayerSettings>
