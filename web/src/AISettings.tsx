@@ -148,7 +148,9 @@ function ProviderConnection({
             group === "tts"
               ? speech?.id === "doubao-tts"
                 ? "普通语音合成留空；使用复刻音色时可指定原生模型版本。"
-                : "填写模型名称；可选获取服务商模型列表。"
+                : speech?.id === "doubao-audio"
+                  ? "默认 seed-audio-1.0；按已开通的音频生成模型填写。"
+                  : "填写模型名称；可选获取服务商模型列表。"
               : "填写地址与 Key 后，获取模型列表，再从服务商模型中选择。"
           }
         >
@@ -398,7 +400,13 @@ function TTSSettings({
       <div className="ai-form-grid mt-5">
         <Field
           label="语音音色 Voice"
-          hint="填写服务商的音色标识；使用参考音频的服务可按需留空。"
+          hint={
+            speech.id === "doubao-tts"
+              ? "必填，使用豆包控制台中的音色 ID。"
+              : speech.id === "doubao-audio"
+                ? "可选；固定音色 ID 可保持分段音色一致，留空由模型生成音色。"
+                : "填写服务商的音色标识；使用参考音频的服务可按需留空。"
+          }
         >
           <input
             value={value.voice}
