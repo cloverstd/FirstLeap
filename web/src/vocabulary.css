@@ -130,3 +130,56 @@
 .vocabulary-loading p {
   flex-basis: 100%;
 }
+
+.vocabulary-basic {
+  margin-top: 1rem;
+  border-radius: 0.75rem;
+  background: var(--muted);
+  padding: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+}
+.vocabulary-basic > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-weight: 500;
+  list-style: none;
+}
+.vocabulary-basic > summary::-webkit-details-marker {
+  display: none;
+}
+.vocabulary-basic[open] > summary svg {
+  transform: rotate(180deg);
+}
+.vocabulary-basic-content {
+  display: grid;
+  gap: 0.875rem;
+  padding-top: 0.75rem;
+}
+.vocabulary-basic-content .vocabulary-course-meaning {
+  margin: 0;
+}
+.vocabulary-basic-content .vocabulary-phonetics {
+  margin: 0;
+  gap: 0.5rem;
+}
+.vocabulary-basic-meanings {
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+.vocabulary-basic-content a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.vocabulary-ai {
+  margin-top: 1rem;
+}
+.vocabulary-ai-content {
+  padding-top: 1rem;
+}
+.vocabulary-ai-content > .vocabulary-phonetics {
+  margin-block: 0 1rem;
+}

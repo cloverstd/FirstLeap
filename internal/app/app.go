@@ -23,8 +23,8 @@ import (
 )
 
 type Config struct {
-	MediaRoot, TextbookRoot, DataRoot, WebRoot string
-	RequireCIFS                                bool
+	MediaRoot, TextbookRoot, DataRoot, WebRoot, DictionaryRoot string
+	RequireCIFS                                                bool
 }
 type Lesson struct {
 	ID        string       `json:"id"`
@@ -52,6 +52,7 @@ type Course struct {
 	Indexing        bool     `json:"indexing"`
 }
 type App struct {
+	dictionary          *dictionaryStore
 	ai                  *aiService
 	cfg                 Config
 	mu                  sync.RWMutex
@@ -101,6 +102,10 @@ func New(cfg Config) (*App, error) {
 		a.entries = make(map[string]entry)
 	}
 	var err error
+	a.dictionary, err = newDictionaryStore(cfg.DictionaryRoot)
+	if err != nil {
+		return nil, err
+	}
 	a.ai, err = newAIService(a)
 	if err != nil {
 		return nil, err

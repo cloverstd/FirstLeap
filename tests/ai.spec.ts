@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   test,
   expect,
@@ -30,6 +31,7 @@ let speechCalls = 0,
   speechGateAfter = 1,
   speechGate: Promise<void> | null = null;
 let counters = {
+    vocabulary: 0,
     explanations: 0,
     images: 0,
     questions: 0,
@@ -61,6 +63,7 @@ test.beforeAll(() => {
 test.afterAll(() => rmSync(binaryRoot, { recursive: true, force: true }));
 test.beforeEach(async ({ request }) => {
   counters = {
+    vocabulary: 0,
     explanations: 0,
     images: 0,
     questions: 0,
@@ -157,6 +160,36 @@ test.beforeEach(async ({ request }) => {
       (m: { role?: string; type?: string }) =>
         m.role === "tool" || m.type === "function_call_output",
     );
+    if (JSON.stringify(input).includes("你负责基于教材和基础词典")) {
+      counters.vocabulary++;
+      chat(
+        JSON.stringify({
+          phoneticUK: "/ˈhændbæɡ/",
+          phoneticUS: "/ˈhændbæɡ/",
+          senses: [
+            {
+              pos: "n.",
+              meaning: "手提包",
+              explanation: "本课用于询问手提包的归属。",
+              countability: "countable",
+              plural: ["handbags"],
+              examples: [
+                {
+                  english: "This handbag is mine.",
+                  chinese: "这个手提包是我的。",
+                },
+              ],
+            },
+          ],
+          verbs: [],
+          extensions: [
+            { expression: "a leather handbag", meaning: "皮革手提包" },
+          ],
+          notes: "注意 this 与单数名词搭配。",
+        }),
+      );
+      return;
+    }
     if (JSON.stringify(input).includes("你负责将已完成")) {
       scriptCalls++;
       chat(
@@ -378,9 +411,37 @@ test.beforeEach(async ({ request }) => {
   origin = await listen(reservation);
   const port = new URL(origin).port;
   await new Promise<void>((done) => reservation.close(() => done()));
+  const dictionaryRoot = join(runRoot, "dictionary");
+  mkdirSync(dictionaryRoot);
+  writeFileSync(
+    join(dictionaryRoot, "manifest.json"),
+    JSON.stringify({
+      name: "ECDICT",
+      url: "https://github.com/skywind3000/ECDICT",
+      revision: "a".repeat(40),
+      format: 1,
+      entries: 1,
+    }),
+  );
+  const dictionaryEntry = {
+    word: "handbag",
+    phonetic: "ˈhændbæɡ",
+    translations: ["n. 手提包；女用手袋"],
+    definitions: ["a small bag for personal items"],
+    forms: [{ label: "复数", values: ["handbags"] }],
+  };
+  const shard = createHash("sha256")
+    .update("handbag")
+    .digest("hex")
+    .slice(0, 2);
+  writeFileSync(
+    join(dictionaryRoot, shard + ".jsonl"),
+    JSON.stringify(dictionaryEntry) + "\n",
+  );
   backend = spawn(join(binaryRoot, "firstleap"), [], {
     env: {
       ...process.env,
+      DICTIONARY_ROOT: join(runRoot, "dictionary"),
       PORT: port,
       BIND_ADDRESS: "127.0.0.1",
       DATA_ROOT: data,
@@ -476,6 +537,7 @@ async function restartSpeechBackend(request: APIRequestContext) {
   backend = spawn(join(binaryRoot, "firstleap"), [], {
     env: {
       ...process.env,
+      DICTIONARY_ROOT: join(runRoot, "dictionary"),
       PORT: new URL(origin).port,
       BIND_ADDRESS: "127.0.0.1",
       DATA_ROOT: join(runRoot, "data"),
@@ -1329,4 +1391,56 @@ test("multiple providers keep independent drafts, defaults and credentials acros
   saved = await (await request.get(origin + "/api/settings/ai")).json();
   expect(saved.settings.text.model).toBe("teaching");
   expect(saved.settings.tts.voice).toBe("teacher");
+});
+
+test("local definitions display immediately and AI expansion is explicit, cached and survives restart", async ({
+  page,
+  request,
+}) => {
+  await configure(request, "chat", false);
+  await page.goto(origin + "/books/1/lessons/1");
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  const entry = page.getByRole("article", {
+    name: "单词：handbag",
+    exact: true,
+  });
+  const expansion = entry.getByRole("button", { name: "AI 拓展单词：handbag" });
+  await expect(entry.locator(".vocabulary-basic")).toHaveAttribute("open", "");
+  await expect(entry.getByRole("region", { name: "词典释义" })).toContainText(
+    "n. 手提包；女用手袋",
+  );
+  await expect(entry.getByLabel("词典音标")).toContainText("/ˈhændbæɡ/");
+  await expect(expansion).toHaveAttribute("aria-expanded", "false");
+  expect(counters.vocabulary).toBe(0);
+  await expansion.click();
+  await expect(expansion).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    entry.getByText("This handbag is mine.", { exact: true }),
+  ).toBeVisible();
+  await expect(expansion).toContainText("已缓存");
+  expect(counters.vocabulary).toBe(1);
+  expect(JSON.stringify(modelRequests)).toContain("n. 手提包；女用手袋");
+  await expansion.click();
+  await expect(
+    entry.getByText("This handbag is mine.", { exact: true }),
+  ).not.toBeVisible();
+  await expansion.click();
+  await expect(
+    entry.getByText("This handbag is mine.", { exact: true }),
+  ).toBeVisible();
+  expect(counters.vocabulary).toBe(1);
+  await restartSpeechBackend(request);
+  await page.reload();
+  await page.getByRole("tab", { name: "单词 · 1" }).click();
+  await expect(expansion).toHaveAttribute("aria-expanded", "false");
+  await expect(expansion).toContainText("已缓存");
+  expect(counters.vocabulary).toBe(1);
+  await expansion.click();
+  await expect(
+    entry.getByText("This handbag is mine.", { exact: true }),
+  ).toBeVisible();
+  expect(counters.vocabulary).toBe(1);
+  await expect(entry.getByRole("region", { name: "词典释义" })).toContainText(
+    "n. 手提包；女用手袋",
+  );
 });

@@ -1208,6 +1208,9 @@ test("word entries show IPA, each meaning and example, noun countability and irr
   await page.goto("/books/1/lessons/1");
   await page.getByRole("tab", { name: "单词 · 1" }).click();
   const entry = page.getByRole("article", { name: "单词：drink", exact: true });
+  await expect(entry.locator(".vocabulary-basic")).toHaveAttribute("open", "");
+  await expect(entry.getByLabel("国际音标")).toHaveCount(0);
+  await entry.getByRole("button", { name: "AI 拓展单词：drink" }).click();
   await expect(entry.getByLabel("国际音标")).toContainText("/drɪŋk/");
   await expect(
     entry
@@ -1247,7 +1250,7 @@ test("word entries show IPA, each meaning and example, noun countability and irr
   expect(generated).toBe(0);
 });
 
-test("word details fill automatically and recover from failure without losing textbook gloss", async ({
+test("AI expansion starts only after clicking and retries without losing basic definitions", async ({
   page,
 }) => {
   let attempts = 0;
@@ -1270,14 +1273,29 @@ test("word details fill automatically and recover from failure without losing te
     name: "单词：handbag",
     exact: true,
   });
+  await expect(entry.locator(".vocabulary-basic")).toHaveAttribute("open", "");
+  await expect(entry.locator(".vocabulary-course-meaning")).toContainText(
+    "手提包",
+  );
+  expect(attempts).toBe(0);
+  await entry.getByRole("button", { name: "AI 拓展单词：handbag" }).click();
+  await expect(
+    entry.getByRole("button", { name: "AI 拓展单词：handbag" }),
+  ).toHaveAttribute("aria-expanded", "true");
   await expect(
     entry.getByText("词条服务暂时不可用", { exact: true }),
   ).toBeVisible();
   await expect(entry.locator(".vocabulary-course-meaning")).toContainText(
     "手提包",
   );
-  await entry.getByRole("button", { name: "重新加载词条" }).click();
+  await entry.getByRole("button", { name: "重试 AI 拓展" }).click();
   await expect(entry.getByText("had drunk", { exact: true })).toBeVisible();
+  expect(attempts).toBe(2);
+  await entry.getByRole("button", { name: "AI 拓展单词：handbag" }).click();
+  await expect(entry.getByText("had drunk", { exact: true })).not.toBeVisible();
+  await entry.getByRole("button", { name: "AI 拓展单词：handbag" }).click();
+  await expect(entry.getByText("had drunk", { exact: true })).toBeVisible();
+  expect(attempts).toBe(2);
   await page.getByRole("tab", { name: "课文", exact: true }).click();
   await expect(
     page
@@ -1333,6 +1351,7 @@ test("modal verbs explain missing forms without inventing participles", async ({
   await page.goto("/books/1/lessons/1");
   await page.getByRole("tab", { name: "单词 · 1" }).click();
   const entry = page.getByRole("article", { name: "单词：must", exact: true });
+  await entry.getByRole("button", { name: "AI 拓展单词：must" }).click();
   await expect(
     entry.getByText("没有现在分词和过去分词，过去的义务可用 had to 表达。", {
       exact: true,
