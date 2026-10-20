@@ -14,6 +14,8 @@ import {
   RefreshCw,
   PlugZap,
   LoaderCircle,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +26,8 @@ import {
   type AISettings as SettingsData,
   type ModelConfig,
   type TTSConfig,
+  type ProviderGroup,
+  type AIProviders,
 } from "./ai";
 import { claimMedia } from "./mediaCoordinator";
 
@@ -33,13 +37,118 @@ type ProviderResult = {
   modelAvailable: boolean;
 };
 
+const PROVIDER_LABELS = { text: "文字", image: "生图", tts: "语音" };
+
+function ProviderPicker({
+  group,
+  providers,
+  selected,
+  defaultId,
+  disabled,
+  select,
+  makeDefault,
+  rename,
+  add,
+  remove,
+}: {
+  group: ProviderGroup;
+  providers: { id: string; name: string }[];
+  selected: string;
+  defaultId: string;
+  disabled: boolean;
+  select: (id: string) => void;
+  makeDefault: (id: string) => void;
+  rename: (name: string) => void;
+  add: () => void;
+  remove: () => void;
+}) {
+  const label = PROVIDER_LABELS[group];
+  const current = providers.find((p) => p.id === selected)!;
+  return (
+    <div className="ai-provider-picker">
+      <div className="ai-form-grid">
+        <Field
+          label={`默认${label} Provider`}
+          hint="保存后，新任务使用此服务。"
+        >
+          <select
+            value={defaultId}
+            disabled={disabled}
+            onChange={(e) => makeDefault(e.target.value)}
+          >
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label={`编辑${label} Provider`}
+          hint="切换编辑会保留草稿，默认服务单独选择。"
+        >
+          <select
+            value={selected}
+            disabled={disabled}
+            onChange={(e) => select(e.target.value)}
+          >
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.id === defaultId ? "（默认）" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={`${label} Provider 名称`}>
+          <input
+            value={current.name}
+            maxLength={100}
+            required
+            disabled={disabled}
+            onChange={(e) => rename(e.target.value)}
+          />
+        </Field>
+      </div>
+      <div className="ai-provider-actions">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || providers.length >= 32}
+          onClick={add}
+          aria-label={`添加${label} Provider`}
+        >
+          <Plus />
+          添加 Provider
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={disabled || selected === defaultId}
+          onClick={remove}
+          aria-label={`删除${label} Provider`}
+        >
+          <Trash2 />
+          删除当前 Provider
+        </Button>
+      </div>
+      <p className="ai-subtle">
+        删除默认服务前，请先选择其他默认
+        Provider。添加、删除和默认选择均在保存后生效。
+      </p>
+    </div>
+  );
+}
+
 function ProviderConnection({
   group,
+  providerId,
   value,
   change,
   disabled,
 }: {
-  group: "text" | "image" | "tts";
+  group: ProviderGroup;
+  providerId: string;
   value: ModelConfig;
   change: (key: string, value: unknown) => void;
   disabled: boolean;
@@ -70,6 +179,7 @@ function ProviderConnection({
         signal: controller.signal,
         body: JSON.stringify({
           group,
+          providerId,
           config: {
             baseURL: value.baseURL,
             apiKey: value.apiKey || "",
@@ -247,7 +357,11 @@ function TTSSettings({
   disabled,
   extraText,
   setExtraText,
+  providerId,
+  children,
 }: {
+  providerId: string;
+  children: ReactNode;
   value: TTSConfig;
   change: (key: string, value: unknown) => void;
   disabled: boolean;
@@ -283,7 +397,7 @@ function TTSSettings({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: abort.signal,
-        body: JSON.stringify({ config: { ...value, extra } }),
+        body: JSON.stringify({ providerId, config: { ...value, extra } }),
       });
       if (!response.ok) {
         const data = await response.json();
@@ -312,7 +426,9 @@ function TTSSettings({
         />
         自动生成 AI 详解语音
       </label>
+      {children}
       <ProviderConnection
+        providerId={providerId}
         group="tts"
         value={value}
         change={change}
@@ -453,22 +569,116 @@ function SettingsForm({
   const [form, setForm] = useState(initial),
     [status, setStatus] = useState(""),
     [busy, setBusy] = useState(false),
-    [extraText, setExtraText] = useState(
-      JSON.stringify(initial.tts.extra || {}, null, 2),
+    [selected, setSelected] = useState(initial.providers.defaults),
+    [extraDrafts, setExtraDrafts] = useState<Record<string, string>>({});
+  const configs = {
+    text: form.providers.text.find((p) => p.id === selected.text)!.config,
+    image: form.providers.image.find((p) => p.id === selected.image)!.config,
+    tts: form.providers.tts.find((p) => p.id === selected.tts)!.config,
+  };
+  const { text, image, tts } = configs;
+  const extraText =
+    extraDrafts[selected.tts] ?? JSON.stringify(tts.extra || {}, null, 2);
+  const model = (group: ProviderGroup, key: string, value: unknown) =>
+    setForm((f) =>
+      key === "enabled"
+        ? { ...f, [group]: { ...f[group], enabled: value } }
+        : {
+            ...f,
+            providers: {
+              ...f.providers,
+              [group]: f.providers[group].map((p) =>
+                p.id === selected[group]
+                  ? { ...p, config: { ...p.config, [key]: value } }
+                  : p,
+              ),
+            },
+          },
     );
-  const model = (
-    group: "text" | "image" | "tts",
-    key: string,
-    value: unknown,
-  ) => setForm((f) => ({ ...f, [group]: { ...f[group], [key]: value } }));
+  const providerPicker = (group: ProviderGroup) => (
+    <ProviderPicker
+      group={group}
+      providers={form.providers[group]}
+      selected={selected[group]}
+      defaultId={form.providers.defaults[group]}
+      disabled={busy}
+      select={(id) => setSelected((s) => ({ ...s, [group]: id }))}
+      makeDefault={(id) =>
+        setForm((f) => ({
+          ...f,
+          providers: {
+            ...f.providers,
+            defaults: { ...f.providers.defaults, [group]: id },
+          },
+        }))
+      }
+      rename={(name) =>
+        setForm((f) => ({
+          ...f,
+          providers: {
+            ...f.providers,
+            [group]: f.providers[group].map((p) =>
+              p.id === selected[group] ? { ...p, name } : p,
+            ),
+          },
+        }))
+      }
+      add={() => {
+        const id = crypto.randomUUID();
+        setForm((f) => ({
+          ...f,
+          providers: {
+            ...f.providers,
+            [group]: [
+              ...f.providers[group],
+              {
+                id,
+                name: `新${PROVIDER_LABELS[group]}服务`,
+                config: { ...defaults[group] },
+              },
+            ],
+          },
+        }));
+        setSelected((s) => ({ ...s, [group]: id }));
+        setStatus("");
+      }}
+      remove={() => {
+        const remaining = form.providers[group].filter(
+          (p) => p.id !== selected[group],
+        );
+        if (!remaining.length) return;
+        setForm((f) => ({
+          ...f,
+          providers: {
+            ...f.providers,
+            [group]: remaining,
+          },
+        }));
+        setSelected((s) => ({ ...s, [group]: remaining[0].id }));
+        setStatus("");
+      }}
+    />
+  );
   return (
     <form
       className="ai-form ai-settings-form"
       onSubmit={(event) => {
         event.preventDefault();
-        let extra: Record<string, unknown>;
+        let providers: AIProviders;
         try {
-          extra = parseTTSExtra(extraText);
+          providers = {
+            ...form.providers,
+            tts: form.providers.tts.map((p) => ({
+              ...p,
+              config: {
+                ...p.config,
+                extra:
+                  extraDrafts[p.id] === undefined
+                    ? p.config.extra
+                    : parseTTSExtra(extraDrafts[p.id]),
+              },
+            })),
+          };
         } catch (e) {
           setStatus((e as Error).message);
           return;
@@ -477,32 +687,14 @@ function SettingsForm({
         setStatus("");
         void api("/api/settings/ai", {
           method: "PUT",
-          body: JSON.stringify({ ...form, tts: { ...form.tts, extra } }),
+          body: JSON.stringify({ ...form, providers }),
         })
-          .then(() => {
-            setForm((f) => ({
-              ...f,
-              text: {
-                ...f.text,
-                keySet: !f.text.clearKey && (!!f.text.apiKey || f.text.keySet),
-                apiKey: "",
-                clearKey: false,
-              },
-              image: {
-                ...f.image,
-                keySet:
-                  !f.image.clearKey && (!!f.image.apiKey || f.image.keySet),
-                apiKey: "",
-                clearKey: false,
-              },
-              tts: {
-                ...f.tts,
-                extra,
-                keySet: !f.tts.clearKey && (!!f.tts.apiKey || f.tts.keySet),
-                apiKey: "",
-                clearKey: false,
-              },
-            }));
+          .then(async () => {
+            const saved = await api<{ settings: SettingsData }>(
+              "/api/settings/ai",
+            );
+            setForm(saved.settings);
+            setExtraDrafts({});
             setStatus(
               "配置已保存。已有详解与语音继续使用缓存，新任务使用当前配置。",
             );
@@ -511,269 +703,286 @@ function SettingsForm({
           .finally(() => setBusy(false));
       }}
     >
-      {(["text", "image"] as const).map((group) => (
-        <section
-          className="ai-card"
-          key={group}
-          aria-label={`${group === "text" ? "文字" : "生图"}模型配置`}
-        >
-          <h2>{group === "text" ? "文字模型" : "生图模型"}</h2>
-          {group === "image" && (
-            <label className="ai-check">
-              <input
-                type="checkbox"
-                checked={form.image.enabled}
-                onChange={(e) => model(group, "enabled", e.target.checked)}
-              />
-              允许 AI 在详解时按需生成配图
-            </label>
-          )}
-          <ProviderConnection
-            group={group}
-            value={form[group]}
-            change={(key, value) => model(group, key, value)}
-            disabled={busy}
-          />
-          {group === "text" && (
-            <div className="ai-form-grid mt-5">
-              <Field label="文字接口协议">
-                <select
-                  value={form.text.protocol}
-                  onChange={(e) => model(group, "protocol", e.target.value)}
-                >
-                  <option value="chat">Chat Completions</option>
-                  <option value="responses">Responses</option>
-                </select>
-              </Field>
-            </div>
-          )}
-          <details>
-            <summary>生成参数</summary>
-            <div className="ai-form-grid mt-5">
-              {group === "text" ? (
-                <>
-                  <Field label="输出 tokens 上限">
-                    <input
-                      type="number"
-                      min={64}
-                      max={131072}
-                      value={form.text.maxTokens}
-                      onChange={(e) =>
-                        model(group, "maxTokens", Number(e.target.value))
-                      }
-                    />
-                  </Field>
-                  <Field
-                    label="Temperature"
-                    hint="留空时使用服务商默认值，适用于不接受此参数的模型。"
-                  >
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="2"
-                      value={form.text.temperature ?? ""}
-                      onChange={(e) =>
-                        model(
-                          group,
-                          "temperature",
-                          e.target.value === "" ? null : Number(e.target.value),
-                        )
-                      }
-                    />
-                  </Field>
-                  <Field label="Chat Completions tokens 字段">
-                    <select
-                      value={form.text.tokenField}
-                      onChange={(e) =>
-                        model(group, "tokenField", e.target.value)
-                      }
-                    >
-                      <option>max_completion_tokens</option>
-                      <option>max_tokens</option>
-                    </select>
-                  </Field>
-                  <label className="ai-check">
-                    <input
-                      type="checkbox"
-                      checked={form.text.stream}
-                      onChange={(e) => model(group, "stream", e.target.checked)}
-                    />
-                    流式显示文字
-                  </label>
-                </>
-              ) : (
-                <>
-                  <Field label="图片尺寸">
-                    <input
-                      value={form.image.size}
-                      onChange={(e) => model(group, "size", e.target.value)}
-                      placeholder="1024x1024"
-                    />
-                  </Field>
-                  <Field
-                    label="图片质量"
-                    hint="留空由服务商决定；支持的值取决于模型。"
-                  >
-                    <input
-                      value={form.image.quality}
-                      onChange={(e) => model(group, "quality", e.target.value)}
-                    />
-                  </Field>
-                  <Field label="每次详解最多调用生图次数">
-                    <input
-                      type="number"
-                      min={0}
-                      max={6}
-                      value={form.image.maxCalls}
-                      onChange={(e) =>
-                        model(group, "maxCalls", Number(e.target.value))
-                      }
-                    />
-                  </Field>
-                </>
-              )}
-              <Field label="单次请求超时（秒）">
-                <input
-                  type="number"
-                  min={5}
-                  max={600}
-                  value={form[group].timeout}
-                  onChange={(e) =>
-                    model(group, "timeout", Number(e.target.value))
-                  }
-                />
-              </Field>
-            </div>
-          </details>
-        </section>
-      ))}
-      <TTSSettings
-        value={form.tts}
-        change={(key, value) => model("tts", key, value)}
-        disabled={busy}
-        extraText={extraText}
-        setExtraText={setExtraText}
-      />
-      <section className="ai-card ai-tools-settings" aria-label="AI 工具配置">
-        <h2>AI 工具</h2>
-        <p>
-          勾选允许 AI
-          按需调用的工具，默认全部启用。每次请求只提供当前流程适用的工具，档案、进度和教学材料通过工具读取。
-        </p>
-        <div className="ai-provider-actions">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={() =>
-              setForm((f) => ({
-                ...f,
-                enabledTools: tools.map((tool) => tool.id),
-              }))
-            }
+      <fieldset disabled={busy} className="ai-settings-fields">
+        {(["text", "image"] as const).map((group) => (
+          <section
+            className="ai-card"
+            key={group}
+            aria-label={`${group === "text" ? "文字" : "生图"}模型配置`}
           >
-            全选工具
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={() => setForm((f) => ({ ...f, enabledTools: [] }))}
-          >
-            取消全选工具
-          </Button>
-        </div>
-        <div className="ai-tool-list">
-          {tools.map((tool) => (
-            <div className="ai-tool-item" key={tool.id}>
+            <h2>{group === "text" ? "文字模型" : "生图模型"}</h2>
+            {group === "image" && (
               <label className="ai-check">
                 <input
                   type="checkbox"
-                  checked={form.enabledTools.includes(tool.id)}
-                  disabled={busy}
-                  aria-label={`启用${tool.label}工具`}
-                  onChange={(event) =>
-                    setForm((f) => ({
-                      ...f,
-                      enabledTools: event.target.checked
-                        ? [...f.enabledTools, tool.id]
-                        : f.enabledTools.filter((id) => id !== tool.id),
-                    }))
-                  }
+                  checked={form.image.enabled}
+                  onChange={(e) => model(group, "enabled", e.target.checked)}
                 />
-                <strong>{tool.label}</strong>
+                允许 AI 在详解时按需生成配图
               </label>
-              <code>{tool.id}</code>
-              <p>{tool.description}</p>
-              <small>
-                适用于：
-                {tool.workflows
-                  .map((workflow) => AI_WORKFLOWS[workflow] || workflow)
-                  .join("、")}
-                {tool.requiredFor.length > 0 &&
-                  `；${tool.requiredFor.join("、")}必需`}
-              </small>
-            </div>
-          ))}
-        </div>
-        <p className="ai-subtle">
-          关闭必要工具会暂停对应生成操作，重新启用后可继续。已有答案、反馈和历史结果仍会保留。
-        </p>
-      </section>
-      <section className="ai-card ai-prompts-settings">
-        <h2>系统提示词</h2>
-        <p>AI 按需通过已启用的工具读取材料，再依据实际获得的信息生成内容。</p>
-        {(
-          Object.entries({
-            system: "通用系统提示词",
-            lesson: "整课详解",
-            sentence: "句段详解",
-            word: "单词详解",
-            image: "生图风格",
-            assessment: "动态测评出题",
-            evaluation: "能力评估",
-            speech: "语音讲课稿",
-          }) as [keyof SettingsData["prompts"], string][]
-        ).map(([key, label]) => (
-          <details key={key} open={key === "system"}>
-            <summary>{label}</summary>
-            <Field label={label}>
-              <textarea
-                rows={5}
-                value={form.prompts[key]}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    prompts: { ...f.prompts, [key]: e.target.value },
-                  }))
-                }
-              />
-            </Field>
+            )}
+            {providerPicker(group)}
+            <ProviderConnection
+              key={selected[group]}
+              group={group}
+              providerId={selected[group]}
+              value={configs[group]}
+              change={(key, value) => model(group, key, value)}
+              disabled={busy}
+            />
+            {group === "text" && (
+              <div className="ai-form-grid mt-5">
+                <Field label="文字接口协议">
+                  <select
+                    value={text.protocol}
+                    onChange={(e) => model(group, "protocol", e.target.value)}
+                  >
+                    <option value="chat">Chat Completions</option>
+                    <option value="responses">Responses</option>
+                  </select>
+                </Field>
+              </div>
+            )}
+            <details>
+              <summary>生成参数</summary>
+              <div className="ai-form-grid mt-5">
+                {group === "text" ? (
+                  <>
+                    <Field label="输出 tokens 上限">
+                      <input
+                        type="number"
+                        min={64}
+                        max={131072}
+                        value={text.maxTokens}
+                        onChange={(e) =>
+                          model(group, "maxTokens", Number(e.target.value))
+                        }
+                      />
+                    </Field>
+                    <Field
+                      label="Temperature"
+                      hint="留空时使用服务商默认值，适用于不接受此参数的模型。"
+                    >
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="2"
+                        value={text.temperature ?? ""}
+                        onChange={(e) =>
+                          model(
+                            group,
+                            "temperature",
+                            e.target.value === ""
+                              ? null
+                              : Number(e.target.value),
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="Chat Completions tokens 字段">
+                      <select
+                        value={text.tokenField}
+                        onChange={(e) =>
+                          model(group, "tokenField", e.target.value)
+                        }
+                      >
+                        <option>max_completion_tokens</option>
+                        <option>max_tokens</option>
+                      </select>
+                    </Field>
+                    <label className="ai-check">
+                      <input
+                        type="checkbox"
+                        checked={text.stream}
+                        onChange={(e) =>
+                          model(group, "stream", e.target.checked)
+                        }
+                      />
+                      流式显示文字
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <Field label="图片尺寸">
+                      <input
+                        value={image.size}
+                        onChange={(e) => model(group, "size", e.target.value)}
+                        placeholder="1024x1024"
+                      />
+                    </Field>
+                    <Field
+                      label="图片质量"
+                      hint="留空由服务商决定；支持的值取决于模型。"
+                    >
+                      <input
+                        value={image.quality}
+                        onChange={(e) =>
+                          model(group, "quality", e.target.value)
+                        }
+                      />
+                    </Field>
+                    <Field label="每次详解最多调用生图次数">
+                      <input
+                        type="number"
+                        min={0}
+                        max={6}
+                        value={image.maxCalls}
+                        onChange={(e) =>
+                          model(group, "maxCalls", Number(e.target.value))
+                        }
+                      />
+                    </Field>
+                  </>
+                )}
+                <Field label="单次请求超时（秒）">
+                  <input
+                    type="number"
+                    min={5}
+                    max={600}
+                    value={configs[group].timeout}
+                    onChange={(e) =>
+                      model(group, "timeout", Number(e.target.value))
+                    }
+                  />
+                </Field>
+              </div>
+            </details>
+          </section>
+        ))}
+        <TTSSettings
+          key={selected.tts}
+          providerId={selected.tts}
+          value={{ ...tts, enabled: form.tts.enabled }}
+          change={(key, value) => model("tts", key, value)}
+          disabled={busy}
+          extraText={extraText}
+          setExtraText={(value) =>
+            setExtraDrafts((drafts) => ({ ...drafts, [selected.tts]: value }))
+          }
+        >
+          {providerPicker("tts")}
+        </TTSSettings>
+        <section className="ai-card ai-tools-settings" aria-label="AI 工具配置">
+          <h2>AI 工具</h2>
+          <p>
+            勾选允许 AI
+            按需调用的工具，默认全部启用。每次请求只提供当前流程适用的工具，档案、进度和教学材料通过工具读取。
+          </p>
+          <div className="ai-provider-actions">
             <Button
               type="button"
-              size="sm"
-              variant="ghost"
+              variant="outline"
+              disabled={busy}
               onClick={() =>
                 setForm((f) => ({
                   ...f,
-                  prompts: { ...f.prompts, [key]: defaults.prompts[key] },
+                  enabledTools: tools.map((tool) => tool.id),
                 }))
               }
             >
-              <RotateCcw size={14} />
-              恢复此项默认值
+              全选工具
             </Button>
-          </details>
-        ))}
-      </section>
-      <div className="ai-save">
-        <Button disabled={busy} type="submit">
-          <Check size={16} />
-          {busy ? "正在保存…" : "保存系统配置"}
-        </Button>
-        <p role="status">{status}</p>
-      </div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setForm((f) => ({ ...f, enabledTools: [] }))}
+            >
+              取消全选工具
+            </Button>
+          </div>
+          <div className="ai-tool-list">
+            {tools.map((tool) => (
+              <div className="ai-tool-item" key={tool.id}>
+                <label className="ai-check">
+                  <input
+                    type="checkbox"
+                    checked={form.enabledTools.includes(tool.id)}
+                    disabled={busy}
+                    aria-label={`启用${tool.label}工具`}
+                    onChange={(event) =>
+                      setForm((f) => ({
+                        ...f,
+                        enabledTools: event.target.checked
+                          ? [...f.enabledTools, tool.id]
+                          : f.enabledTools.filter((id) => id !== tool.id),
+                      }))
+                    }
+                  />
+                  <strong>{tool.label}</strong>
+                </label>
+                <code>{tool.id}</code>
+                <p>{tool.description}</p>
+                <small>
+                  适用于：
+                  {tool.workflows
+                    .map((workflow) => AI_WORKFLOWS[workflow] || workflow)
+                    .join("、")}
+                  {tool.requiredFor.length > 0 &&
+                    `；${tool.requiredFor.join("、")}必需`}
+                </small>
+              </div>
+            ))}
+          </div>
+          <p className="ai-subtle">
+            关闭必要工具会暂停对应生成操作，重新启用后可继续。已有答案、反馈和历史结果仍会保留。
+          </p>
+        </section>
+        <section className="ai-card ai-prompts-settings">
+          <h2>系统提示词</h2>
+          <p>AI 按需通过已启用的工具读取材料，再依据实际获得的信息生成内容。</p>
+          {(
+            Object.entries({
+              system: "通用系统提示词",
+              lesson: "整课详解",
+              sentence: "句段详解",
+              word: "单词详解",
+              image: "生图风格",
+              assessment: "动态测评出题",
+              evaluation: "能力评估",
+              speech: "语音讲课稿",
+            }) as [keyof SettingsData["prompts"], string][]
+          ).map(([key, label]) => (
+            <details key={key} open={key === "system"}>
+              <summary>{label}</summary>
+              <Field label={label}>
+                <textarea
+                  rows={5}
+                  value={form.prompts[key]}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      prompts: { ...f.prompts, [key]: e.target.value },
+                    }))
+                  }
+                />
+              </Field>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    prompts: { ...f.prompts, [key]: defaults.prompts[key] },
+                  }))
+                }
+              >
+                <RotateCcw size={14} />
+                恢复此项默认值
+              </Button>
+            </details>
+          ))}
+        </section>
+        <div className="ai-save">
+          <Button disabled={busy} type="submit">
+            <Check size={16} />
+            {busy ? "正在保存…" : "保存系统配置"}
+          </Button>
+          <p role="status">{status}</p>
+        </div>
+      </fieldset>
     </form>
   );
 }

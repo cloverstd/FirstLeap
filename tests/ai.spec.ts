@@ -270,7 +270,8 @@ test.beforeEach(async ({ request }) => {
       return;
     }
     const context = returned.get_current_learning_state as
-      { stage?: string } | undefined;
+      | { stage?: string }
+      | undefined;
     chat(
       `## 适合你的详解\n\nThis 是单数指示代词，表示“这个”。\n\n例如：**This is my bag.**（这是我的包。）\n\n${context?.stage || "初学"}：先理解句子，再练习表达。`,
     );
@@ -419,6 +420,7 @@ async function configure(
   const { settings } = await (
     await request.get(origin + "/api/settings/ai")
   ).json();
+  delete settings.providers; // Exercise compatibility with older settings clients.
   settings.text = {
     ...settings.text,
     baseURL: providerURL + "/v1",
@@ -453,6 +455,7 @@ async function enableSpeech(request: APIRequestContext, speed = 1) {
   const { settings } = await (
     await request.get(origin + "/api/settings/ai")
   ).json();
+  delete settings.providers;
   settings.tts = {
     ...settings.tts,
     enabled: true,
@@ -677,7 +680,9 @@ test("retrying failed speech after correcting settings plays the first replaceme
       player.getByRole("button", { name: "播放 AI 讲解", exact: true }),
     ).toBeEnabled();
     await expect(player.getByLabel("AI 讲解播放进度")).toBeEnabled();
-    await player.getByRole("button", { name: "播放 AI 讲解", exact: true }).click();
+    await player
+      .getByRole("button", { name: "播放 AI 讲解", exact: true })
+      .click();
     await expect
       .poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused))
       .toBe(false);
@@ -1164,4 +1169,156 @@ test("dynamic assessment updates abilities and server progress reaches another d
   await expect(page.locator(".ai-context")).toContainText(
     "按初级水平 · 复习生成",
   );
+});
+
+test("multiple providers keep independent drafts, defaults and credentials across reloads", async ({
+  page,
+  request,
+}) => {
+  await configure(request);
+  await enableSpeech(request);
+  await page.goto(origin + "/settings");
+  const groups = [
+    {
+      group: "text",
+      label: "文字",
+      region: "文字模型配置",
+      model: "new-provider-model",
+      key: "private-key-never-expose",
+    },
+    {
+      group: "image",
+      label: "生图",
+      region: "生图模型配置",
+      model: "illustration",
+      key: "image-private",
+    },
+    {
+      group: "tts",
+      label: "语音",
+      region: "语音合成配置",
+      model: "second-tts",
+      key: "speech-private",
+    },
+  ] as const;
+  const ids: Record<string, string> = {};
+  for (const { group, label, region, model, key } of groups) {
+    const section = page.getByRole("region", { name: region });
+    const editing = section.getByLabel(`编辑${label} Provider`, {
+      exact: true,
+    });
+    const defaultProvider = section.getByLabel(`默认${label} Provider`, {
+      exact: true,
+    });
+    await expect(
+      section.getByRole("button", { name: `删除${label} Provider` }),
+    ).toBeDisabled();
+    await section
+      .getByRole("button", { name: `添加${label} Provider` })
+      .click();
+    ids[group] = await editing.inputValue();
+    await section
+      .getByLabel(`${label} Provider 名称`, { exact: true })
+      .fill(`备用${label}`);
+    await section
+      .getByLabel(`${label} Base URL`, { exact: true })
+      .fill(providerURL + "/v1");
+    await section.getByLabel(`${label} API Key`, { exact: true }).fill(key);
+    if (group === "tts") {
+      await section.getByLabel("语音 Model", { exact: true }).fill(model);
+      await section.getByLabel("语音音色 Voice").fill("second-voice");
+      await section.getByText("讲课风格与兼容参数", { exact: true }).click();
+      await section.getByLabel("语音高级参数 JSON").fill('{"language":"zh"}');
+    } else {
+      await section
+        .getByRole("button", { name: `获取${label}模型列表` })
+        .click();
+      await section
+        .getByLabel(`${label} Model`, { exact: true })
+        .selectOption(model);
+    }
+    await expect(defaultProvider).toHaveValue(`legacy-${group}`);
+    await editing.selectOption(`legacy-${group}`);
+    await expect(
+      section.getByLabel(`${label} API Key`, { exact: true }),
+    ).toHaveValue("");
+    await editing.selectOption(ids[group]);
+    await expect(
+      section.getByLabel(`${label} API Key`, { exact: true }),
+    ).toHaveValue(key);
+    await expect(
+      section.getByLabel(`${label} Model`, { exact: true }),
+    ).toHaveValue(model);
+    if (group === "tts") {
+      await section.getByText("讲课风格与兼容参数", { exact: true }).click();
+      await expect(section.getByLabel("语音高级参数 JSON")).toHaveValue(
+        '{"language":"zh"}',
+      );
+    }
+    await defaultProvider.selectOption(ids[group]);
+    await expect(
+      section.getByRole("button", { name: `删除${label} Provider` }),
+    ).toBeDisabled();
+  }
+  await page.getByRole("button", { name: "保存系统配置" }).click();
+  await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
+  await page.reload();
+  let saved = await (await request.get(origin + "/api/settings/ai")).json();
+  for (const { group, label, region, model } of groups) {
+    const section = page.getByRole("region", { name: region });
+    await expect(
+      section.getByLabel(`默认${label} Provider`, { exact: true }),
+    ).toHaveValue(ids[group]);
+    await expect(
+      section.getByLabel(`${label} Model`, { exact: true }),
+    ).toHaveValue(model);
+    await expect(
+      section.getByLabel(`${label} API Key`, { exact: true }),
+    ).toHaveAttribute("placeholder", "已配置");
+    expect(saved.settings.providers[group]).toHaveLength(2);
+    expect(saved.settings[group].model).toBe(model);
+    expect(saved.settings.providers[group][0].config.keySet).toBe(true);
+  }
+  expect(saved.settings.image.enabled).toBe(true);
+  expect(saved.settings.tts.enabled).toBe(true);
+  expect(saved.settings.tts.extra).toEqual({ language: "zh" });
+  await page.getByRole("button", { name: "测试文字连接" }).click();
+  await expect(
+    page.getByRole("region", { name: "文字模型配置" }).getByRole("status"),
+  ).toContainText("连接成功");
+  const tts = page.getByRole("region", { name: "语音合成配置" });
+  await tts.getByRole("button", { name: "生成短句试听" }).click();
+  await expect(tts.getByLabel("语音试听")).toHaveAttribute("src", /^blob:/);
+  expect(
+    modelRequests.find((input) => input.model === "second-tts"),
+  ).toMatchObject({ voice: "second-voice", language: "zh" });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  for (const { group, label, region } of groups) {
+    const section = page.getByRole("region", { name: region });
+    await section
+      .getByLabel(`默认${label} Provider`, { exact: true })
+      .selectOption(`legacy-${group}`);
+    await section
+      .getByRole("button", { name: `删除${label} Provider` })
+      .click();
+    await expect(
+      section.getByLabel(`编辑${label} Provider`, { exact: true }),
+    ).toHaveValue(`legacy-${group}`);
+  }
+  await page.getByRole("button", { name: "保存系统配置" }).click();
+  await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
+  saved = await (await request.get(origin + "/api/settings/ai")).json();
+  for (const { group } of groups) {
+    expect(saved.settings.providers[group]).toHaveLength(1);
+    expect(saved.settings.providers.defaults[group]).toBe(`legacy-${group}`);
+    expect(saved.settings[group].keySet).toBe(true);
+  }
+  await restartSpeechBackend(request);
+  saved = await (await request.get(origin + "/api/settings/ai")).json();
+  expect(saved.settings.text.model).toBe("teaching");
+  expect(saved.settings.tts.voice).toBe("teacher");
 });

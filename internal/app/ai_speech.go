@@ -457,12 +457,13 @@ func (s *aiService) speechRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /api/settings/ai/tts/preview", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Config ttsConfig `json:"config"`
+			Config     ttsConfig `json:"config"`
+			ProviderID string    `json:"providerId,omitempty"`
 		}
 		if !decodeBody(w, r, &req) {
 			return
 		}
-		base, err := s.providerPreview(providerSettingsRequest{Group: "tts", Config: req.Config.modelConfig})
+		base, err := s.providerPreview(providerSettingsRequest{Group: "tts", ProviderID: req.ProviderID, Config: req.Config.modelConfig})
 		if err != nil {
 			failure(w, 400, err.Error())
 			return
