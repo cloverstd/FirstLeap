@@ -252,15 +252,15 @@ python3 tools/align_textbook_translations.py --data data --model data/textbooks/
 2. 按需分别添加多个文字、生图和语音 Provider，并为每类选择默认服务。独立配置生图服务并启用配图，接口为 `/images/generations`。不同 Provider 的地址、Key 和 Model 完全独立。文字模型须支持所选协议的 function calling，模型通过 `generate_image` 工具自行决定是否配图。
 3. 打开 `/learning-profile` 填写目标、薄弱项和口语／写作自评，或开始 16 题动态测评。测评包含词汇、语法、阅读、听力各 4 题，AI 根据之前的回答调整后续题目。听力复用现有可播放课程原音，无需额外语音服务；播放失败可重试或跳过，不记为答错。未完成的能力维度保留原档案。每道可作答题都额外提供“不知道”选项，无需猜答案；记录为明确的未掌握证据，用于后续出题与水平评估，与音频故障时不计分的跳过分开保存。
 4. 打开课程后，有缓存直接显示；首次整课详解需要点击生成。每句的 AI 按钮、生词 AI 按钮，以及划选后出现的 AI 按钮，会查询对应缓存，未命中时生成。单击单词仍然点读，划选不触发播放。
-5. 在“语音合成”中配置独立的 OpenAI 兼容 TTS 服务并开启自动生成。新详解完成后自动生成讲课稿和语音；旧详解在打开时补生成。首次生成可以先听已经完成的分段，生成完成后直接读取磁盘音频，不会自动出声。
+5. 在“语音合成”中配置独立的 OpenAI 兼容、豆包 Seed TTS 或 Seed Audio 服务并开启自动生成。新详解完成后自动生成讲课稿和语音；旧详解在打开时补生成。首次生成可以先听已经完成的分段，生成完成后直接读取磁盘音频，不会自动出声。
 
 ### 多 Provider 与默认服务
 
-文字、生图、语音分别支持保存多个 OpenAI 兼容 Provider。在每类配置中点击“添加 Provider”，填写名称、Base URL、API Key 和 Model；每个 Provider 独立保存协议、超时及生成参数，语音还独立保存音色、语速、格式和高级参数。
+文字、生图、语音分别以列表显示多个 Provider，列表展示名称、接口类型、模型或资源 ID、地址、密钥配置状态及默认标记。点击“编辑”在弹窗中修改单个 Provider；点击“添加 Provider”打开独立空白表单，名称、地址、密钥、模型、音色、风格和高级参数不继承已有服务。选择豆包原生接口后才填入该类型的官方地址及默认模型／资源 ID。每个 Provider 独立保存协议、超时及生成参数，语音还独立保存音色、语速、格式和高级参数。
 
-“编辑 Provider”选择当前要修改或测试的服务，切换时保留未保存的草稿；“默认 Provider”独立决定保存后新任务使用的服务。文字默认服务同时用于详解、测评、能力评估和语音讲课稿，生图与语音各使用自己的默认服务。生图开关、自动生成语音开关、工具与提示词由所有 Provider 共用。删除当前默认服务前，需先选择另一个默认服务；添加、删除、改名和默认选择均需点击“保存系统配置”才生效。
+弹窗中的“保存 Provider”只保存当前服务并立即生效，“取消”或关闭弹窗丢弃本次草稿。列表中的“设为默认”和确认删除也独立提交；新增服务不会自动成为默认。默认服务和每类最后一个服务不可删除。文字默认服务同时用于详解、测评、能力评估和语音讲课稿，生图与语音各使用自己的默认服务。生图开关、自动生成语音开关、工具与提示词由所有 Provider 共用，仍由“保存系统配置”统一保存；Provider 操作不会提交或覆盖这些未保存的修改。
 
-已有单服务配置自动显示为“原文字服务 / 原生图服务 / 原语音服务”，并作为对应默认 Provider，地址、密钥和参数保留。Key 留空只保留当前 Provider 自己的 Key，清除选项也只作用于当前 Provider；修改地址后须重新填写或显式清除 Key。模型列表、连接测试和语音试听使用当前编辑的 Provider，不改变已保存的默认选择。读取接口不返回任何 Provider 的 Key。
+已有单服务配置自动显示为“原文字服务 / 原生图服务 / 原语音服务”，并作为对应默认 Provider，地址、密钥和参数保留。Key 留空只保留当前 Provider 自己的 Key，清除选项也只作用于当前 Provider；修改地址后须重新填写或显式清除 Key；语音接口类型、鉴权方式或 App ID 改变时也适用。模型列表、连接测试和语音试听使用当前编辑的 Provider，不改变已保存的默认选择。读取接口不返回任何 Provider 的 Key。
 
 配置接口的 `settings.providers` 包含 `text`、`image`、`tts` 三个列表，每项为 `{id, name, config}`，`defaults` 保存三类默认 Provider 的 ID。原有 `text`、`image`、`tts` 字段继续返回实际生效的默认配置，旧客户端省略 `providers` 时只更新默认服务并保留其它 Provider。模型列表、连接测试和语音试听请求可传 `providerId`，按该 Provider 复用已保存密钥；新增 Provider 不会继承其它服务的密钥。
 
@@ -268,9 +268,16 @@ python3 tools/align_textbook_translations.py --data data --model data/textbooks/
 
 ### AI 语音讲解
 
-语音合成请求为 `POST {Base URL}/audio/speech`，Base URL 应包含 API 前缀，例如 `http://mac-studio:8001/v1`。填写服务商的 Model 和音色 Voice，可手动输入模型名称，获取模型列表不是必需条件。支持免 Key 的本地服务；Mac 上的 Qwen3-TTS、CosyVoice 需要先由支持该接口的推理服务提供 HTTP 接口。本应用负责接入，不在网站容器内安装语音模型。网站容器需要能访问语音服务，容器内的 `localhost` 指向容器自身。
+语音 Provider 可选择三种接口类型。旧配置未指定 `apiType` 时按 `openai` 处理，地址、密钥、生成参数和已有音频继续兼容。试听和正式生成使用相同适配器：原生请求与响应由适配器处理，分段、并发、超时、音频校验和缓存由公共流程管理。
 
-系统配置统一保存合成语速（默认 1.0，范围 0.25–4.0）、音色、MP3/WAV 格式（默认 MP3）、单段超时（默认 300 秒，范围 30–1800 秒）、可选的讲课风格和高级 JSON 参数。风格指令默认不发送，可选择标准 OpenAI 的 `instructions` 或 MLX 的 `instruct`，具体能力以服务商模型为准。高级参数可传语言、参考音频等扩展字段；参考音频须是 TTS 服务可识别的地址或服务端路径，不是浏览器本地路径。高级参数不能覆盖 `model`、`input`、`voice`、`speed`、`response_format`、指令或流式字段。
+- **OpenAI 兼容（`openai`）**：请求为 `POST {Base URL}/audio/speech`，Base URL 应包含 API 前缀，例如 `http://mac-studio:8001/v1`。填写服务商的 Model 和音色 Voice，可手动输入模型名称，获取模型列表不是必需条件。支持免 Key 的本地服务；Mac 上的 Qwen3-TTS、CosyVoice 需要先由支持该接口的推理服务提供 HTTP 接口。本应用负责接入，不在网站容器内安装语音模型。网站容器需要能访问语音服务，容器内的 `localhost` 指向容器自身。
+
+- **豆包语音合成（`doubao-tts`）**：Base URL 默认 `https://openspeech.bytedance.com/api/v3`，调用 `/tts/unidirectional`。填写资源 ID（默认 `seed-tts-2.0`）和 Speaker 音色 ID；普通语音合成的 Model 可留空，使用复刻音色时按原生接口配置版本。音频按连续 JSON 记录返回，应用逐块解码 Base64 并要求完整结束状态。MP3 分块按顺序汇总；WAV 使用 PCM 汇总后封装为单个文件。讲课风格发送到 `additions.context_texts`；指定复刻 Model 时不可同时设置风格指令。
+- **豆包音频生成（`doubao-audio`）**：同一 Base URL 下调用 `/tts/create`，默认模型 `seed-audio-1.0`。将分段讲稿与风格组成 `text_prompt`，要求保留原文、逐字朗读且不添加背景音乐和音效；填写音色后通过 `references[].speaker` 指定。读取响应中的 Base64 音频并缓存到本地，不依赖两小时后过期的上游链接。此功能用于现有讲解语音，不增加独立音频创作入口。
+
+豆包默认使用新版控制台 API Key，通过 `X-Api-Key` 鉴权；选择旧版鉴权时填写 App ID，并在密钥栏填写 Access Token，发送 `X-Api-App-Id` 与 `X-Api-Access-Key`。Seed TTS 另发送 `X-Api-Resource-Id`；两种接口均生成独立 UUID 请求 ID。原生豆包接口不调用 `/models`，使用短句试听验证实际合成能力。
+
+系统配置统一保存合成语速（默认 1.0，OpenAI 范围 0.25–4.0，豆包范围 0.5–2.0，映射为原生 `speech_rate`）、音色、MP3/WAV 格式（默认 MP3）、单段超时（默认 300 秒，范围 30–1800 秒）、可选的讲课风格和高级 JSON 参数。风格指令默认不发送，可选择标准 OpenAI 的 `instructions` 或 MLX 的 `instruct`，具体能力以服务商模型为准。高级参数可传语言、参考音频等扩展字段；参考音频须是 TTS 服务可识别的地址或服务端路径，不是浏览器本地路径。OpenAI 高级参数不能覆盖 `model`、`input`、`voice`、`speed`、`response_format`、指令或流式字段。豆包 Seed TTS 高级参数合并到 `req_params`，其中 `additions` 填写 JSON 对象，由应用序列化为原生字符串；Seed Audio 高级参数合并到请求顶层。两者都不能覆盖讲稿、模型、已配置音色、语速和格式，采样率等音频选项可放在 `audio_params`／`audio_config` 对象中。
 
 “生成短句试听”使用当前设置草稿合成一段中英混合例句，无需先保存，会产生一次 TTS 调用；不会调用文字模型或保存试听音频。测试连接仍只检查模型列表，不代替真实试听。
 
@@ -283,6 +290,8 @@ python3 tools/align_textbook_translations.py --data data --model data/textbooks/
 修改音色、语速或讲课风格不会删除已有语音，点击“重新生成语音”才采用新设置。只更换语音参数时复用已保存讲稿；修改讲稿提示词后重新生成会使用新讲稿。新版本完全生成成功前保留可播放的旧音频，正在收听的旧版本不会突然切换；旧版本没有可播放分段时，改用新版本，首段生成后即可收听。语音任务失败不影响详解文本。运行环境需安装 `ffprobe` 以校验音频和读取时长，现有 Docker 镜像已包含。
 
 语音接口包括 `GET/POST /api/ai/explanations/{id}/speech`、`GET /api/ai/speech/{id}/segments/{index}` 和 `POST /api/settings/ai/tts/preview`。查询可带 `version`，生成请求须提供详解的 `contentVersion`，可选 `regenerate` 或 `retry`。生成返回语音状态、已保存分段和任务 ID，通过已有任务 SSE 获取进度；音频分段支持 HTTP Range 播放。设置中的 `tts` 独立保存密钥，读取配置只返回是否已配置。
+
+单项 Provider 管理接口为 `POST /api/settings/ai/providers/{group}`（创建，提供独立 `id`、`name`、`config`）、`PUT/DELETE /api/settings/ai/providers/{group}/{id}`（修改／删除）和 `PUT /api/settings/ai/providers/{group}/default`（提供 `providerId`）。`PATCH /api/settings/ai` 仅修改 `enabledTools`、`prompts`、`imageEnabled`、`speechEnabled`；提示词支持按字段更新。单项操作在锁内与最新配置合并，原子持久化并返回脱敏的 `settings`。原有 GET/PUT 接口继续兼容旧客户端。GET 额外返回 `speechAdapters`，包含接口类型、显示名、模型列表能力、语速范围和空白默认模板。
 
 AI 通过已启用的工具按需读取能力档案、目标、薄弱项、已学课程、当前课文位置和初学／复习状态。课文全文、档案、进度、测评记录和评估证据不再整块附加在首轮模型请求中；首轮只提供任务、必要标识和选中的词句。只有工具实际返回的数据才作为生成依据，详解界面的水平与初学／复习标记也仅展示实际读取过的依据。能力采用本应用五档教学等级，未经测评的口语和写作保留自评／未评估状态。课程播放完成只更新进度，不直接提升能力等级。
 

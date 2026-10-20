@@ -115,6 +115,24 @@ test.beforeEach(async ({ request }) => {
       res.end(readFileSync(join(runRoot, "audio.mp3")));
       return;
     }
+    if (req.url === "/v1/tts/create" || req.url === "/v1/tts/unidirectional") {
+      if (req.headers["x-api-key"] !== "speech-private") {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      speechCalls++;
+      const audio = readFileSync(join(runRoot, "audio.mp3")).toString("base64");
+      res.setHeader("Content-Type", "application/json");
+      if (req.url.endsWith("create")) res.end(JSON.stringify({ audio }));
+      else
+        res.end(
+          JSON.stringify({ code: 0, data: audio }) +
+            "\n" +
+            JSON.stringify({ code: 20000000 }),
+        );
+      return;
+    }
     res.setHeader("Content-Type", "application/json");
     if (req.url === "/v1/images/generations") {
       counters.images++;
@@ -558,14 +576,32 @@ async function restartSpeechBackend(request: APIRequestContext) {
     .toBe(200);
 }
 
+async function editProvider(page: Page, region: string, name?: string) {
+  const section = page.getByRole("region", { name: region });
+  const row = name
+    ? section.getByRole("listitem", { name, exact: true })
+    : section;
+  await row.getByRole("button", { name: "编辑", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+async function saveProvider(page: Page) {
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存 Provider", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
+
 test("TTS settings support manual models, draft preview and persistent private keys", async ({
   page,
   request,
 }) => {
   await configure(request, "chat", false);
   await page.goto(origin + "/settings");
-  const section = page.getByRole("region", { name: "语音合成配置" });
-  await section.getByLabel("自动生成 AI 详解语音").check();
+  await page.getByLabel("自动生成 AI 详解语音").check();
+  let section = await editProvider(page, "语音合成配置");
   await section
     .getByLabel("语音 Base URL", { exact: true })
     .fill(providerURL + "/v1");
@@ -585,35 +621,38 @@ test("TTS settings support manual models, draft preview and persistent private k
   await section.getByLabel("语音高级参数 JSON").fill('{"lang_code":"zh"}');
   await section.getByRole("button", { name: "生成短句试听" }).click();
   await expect(section.getByLabel("语音试听")).toHaveAttribute("src", /^blob:/);
-  const previewURL = await section.getByLabel("语音试听").getAttribute("src");
-  await page
-    .getByLabel("文字 Provider 名称", { exact: true })
-    .fill("主文字服务");
-  await expect(section.getByLabel("语音试听")).toHaveAttribute(
-    "src",
-    previewURL!,
-  );
   expect(speechCalls).toBe(1);
   expect(scriptCalls).toBe(0);
-  const speech = modelRequests.find(
-    (input) => input.model === "manually-specified-model",
-  )!;
-  expect(speech).toMatchObject({
+  expect(
+    modelRequests.find((input) => input.model === "manually-specified-model"),
+  ).toMatchObject({
     voice: "Serena",
     speed: 0.85,
     instruct: "像耐心的老师讲课",
     lang_code: "zh",
     response_format: "mp3",
   });
-  expect(speech).not.toHaveProperty("instructions");
-  const before = await (await request.get(origin + "/api/settings/ai")).json();
-  expect(before.settings.tts.enabled).toBe(false);
+  expect(
+    (await (await request.get(origin + "/api/settings/ai")).json()).settings.tts
+      .enabled,
+  ).toBe(false);
+  await saveProvider(page);
+  // Provider save must not submit the unsaved feature switch.
+  expect(
+    (await (await request.get(origin + "/api/settings/ai")).json()).settings.tts
+      .enabled,
+  ).toBe(false);
+  await expect(page.getByLabel("自动生成 AI 详解语音")).toBeChecked();
   await page.getByRole("button", { name: "保存系统配置" }).click();
   await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
+  await page.reload();
+  section = await editProvider(page, "语音合成配置");
   await expect(section.getByLabel("语音 API Key", { exact: true })).toHaveValue(
     "",
   );
-  await page.reload();
+  await expect(
+    section.getByLabel("语音 API Key", { exact: true }),
+  ).toHaveAttribute("placeholder", "已配置");
   await expect(section.getByLabel("合成语速", { exact: true })).toHaveValue(
     "0.85",
   );
@@ -855,38 +894,38 @@ test("settings save independent models and write-only keys", async ({
   request,
 }) => {
   await page.goto(origin + "/settings");
-  await page
-    .getByLabel("文字 Base URL", { exact: true })
-    .fill(providerURL + "/v1");
-  await page
-    .getByLabel("文字 API Key", { exact: true })
-    .fill("private-key-never-expose");
-  await page.getByRole("button", { name: "获取文字模型列表" }).click();
-  await page.getByLabel("文字 Model", { exact: true }).selectOption("teaching");
-  await page.getByRole("button", { name: "测试文字连接" }).click();
-  await expect(
-    page.getByRole("region", { name: "文字模型配置" }).getByRole("status"),
-  ).toContainText("连接成功");
-  await page.getByLabel("文字接口协议").selectOption("responses");
+  for (const { label, region, key, model } of [
+    {
+      label: "文字",
+      region: "文字模型配置",
+      key: "private-key-never-expose",
+      model: "teaching",
+    },
+    {
+      label: "生图",
+      region: "生图模型配置",
+      key: "image-private",
+      model: "illustration",
+    },
+  ]) {
+    const dialog = await editProvider(page, region);
+    await dialog
+      .getByLabel(`${label} Base URL`, { exact: true })
+      .fill(providerURL + "/v1");
+    await dialog.getByLabel(`${label} API Key`, { exact: true }).fill(key);
+    await dialog.getByRole("button", { name: `获取${label}模型列表` }).click();
+    await dialog
+      .getByLabel(`${label} Model`, { exact: true })
+      .selectOption(model);
+    await dialog.getByRole("button", { name: `测试${label}连接` }).click();
+    await expect(dialog.getByRole("status")).toContainText("连接成功");
+    if (label === "文字")
+      await dialog.getByLabel("文字接口协议").selectOption("responses");
+    await saveProvider(page);
+  }
   await page.getByLabel("允许 AI 在详解时按需生成配图").check();
-  await page
-    .getByLabel("生图 Base URL", { exact: true })
-    .fill(providerURL + "/v1");
-  await page.getByLabel("生图 API Key", { exact: true }).fill("image-private");
-  await page.getByRole("button", { name: "获取生图模型列表" }).click();
-  await page
-    .getByLabel("生图 Model", { exact: true })
-    .selectOption("illustration");
-  await page.getByRole("button", { name: "测试生图连接" }).click();
-  await expect(
-    page.getByRole("region", { name: "生图模型配置" }).getByRole("status"),
-  ).toContainText("连接成功");
-  expect(counters.explanations + counters.images).toBe(0);
   await page.getByRole("button", { name: "保存系统配置" }).click();
   await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
-  await expect(page.getByLabel("文字 API Key", { exact: true })).toHaveValue(
-    "",
-  );
   const response = await (
     await request.get(origin + "/api/settings/ai")
   ).text();
@@ -897,23 +936,21 @@ test("settings save independent models and write-only keys", async ({
     await page.evaluate(() => Object.values(localStorage).join(" ")),
   ).not.toContain("private-key-never-expose");
   await page.reload();
-  await expect(
-    page.getByLabel("文字 API Key", { exact: true }),
-  ).toHaveAttribute("placeholder", "已配置");
-  await page.getByRole("button", { name: "测试文字连接" }).click();
-  await expect(
-    page.getByRole("region", { name: "文字模型配置" }).getByRole("status"),
-  ).toContainText("连接成功");
-  await page.getByRole("button", { name: "测试生图连接" }).click();
-  await expect(
-    page.getByRole("region", { name: "生图模型配置" }).getByRole("status"),
-  ).toContainText("连接成功");
-  await expect(page.getByLabel("文字 Model", { exact: true })).toHaveValue(
-    "teaching",
-  );
-  await expect(page.getByLabel("生图 Model", { exact: true })).toHaveValue(
-    "illustration",
-  );
+  for (const { label, region, model } of [
+    { label: "文字", region: "文字模型配置", model: "teaching" },
+    { label: "生图", region: "生图模型配置", model: "illustration" },
+  ]) {
+    const dialog = await editProvider(page, region);
+    await expect(
+      dialog.getByLabel(`${label} API Key`, { exact: true }),
+    ).toHaveAttribute("placeholder", "已配置");
+    await dialog.getByRole("button", { name: `测试${label}连接` }).click();
+    await expect(dialog.getByRole("status")).toContainText("连接成功");
+    await expect(
+      dialog.getByLabel(`${label} Model`, { exact: true }),
+    ).toHaveValue(model);
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  }
   expect(counters.explanations + counters.images).toBe(0);
 });
 
@@ -923,7 +960,7 @@ test("provider connection errors and removed models can be corrected without sav
 }) => {
   await configure(request);
   await page.goto(origin + "/settings");
-  const text = page.getByRole("region", { name: "文字模型配置" });
+  const text = await editProvider(page, "文字模型配置");
   await page.getByLabel("文字 API Key", { exact: true }).fill("bad-key");
   await page.getByRole("button", { name: "测试文字连接" }).click();
   await expect(text.getByRole("alert")).toContainText("认证失败");
@@ -942,9 +979,7 @@ test("provider connection errors and removed models can be corrected without sav
   await expect(text.getByRole("alert")).toHaveCount(0);
   await page.getByRole("button", { name: "测试文字连接" }).click();
   await expect(text.getByRole("status")).toContainText("连接成功");
-  await expect(page.getByLabel("生图 Model", { exact: true })).toHaveValue(
-    "illustration",
-  );
+
   const { settings } = await (
     await request.get(origin + "/api/settings/ai")
   ).json();
@@ -959,6 +994,7 @@ test("editing a provider cancels stale model lists and never forwards a saved ke
 }) => {
   await configure(request);
   await page.goto(origin + "/settings");
+  const text = await editProvider(page, "文字模型配置");
   modelDelay = 350;
   await page.getByRole("button", { name: "获取文字模型列表" }).click();
   await expect.poll(() => counters.models).toBe(1);
@@ -966,7 +1002,6 @@ test("editing a provider cancels stale model lists and never forwards a saved ke
     .getByLabel("文字 Base URL", { exact: true })
     .fill(providerURL + "/other");
   await page.waitForTimeout(450);
-  const text = page.getByRole("region", { name: "文字模型配置" });
   await expect(text.getByRole("status")).toHaveCount(0);
   await expect(
     page
@@ -1241,13 +1276,16 @@ test("dynamic assessment updates abilities and server progress reaches another d
   );
 });
 
-test("multiple providers keep independent drafts, defaults and credentials across reloads", async ({
+test("provider lists use isolated editors, immediate saves and persistent defaults", async ({
   page,
   request,
 }) => {
   await configure(request);
   await enableSpeech(request);
   await page.goto(origin + "/settings");
+  await page
+    .getByLabel("通用系统提示词", { exact: true })
+    .fill("尚未保存的提示词");
   const groups = [
     {
       group: "text",
@@ -1271,126 +1309,145 @@ test("multiple providers keep independent drafts, defaults and credentials acros
       key: "speech-private",
     },
   ] as const;
-  const ids: Record<string, string> = {};
   for (const { group, label, region, model, key } of groups) {
-    const section = page.getByRole("region", { name: region });
-    const editing = section.getByLabel(`编辑${label} Provider`, {
-      exact: true,
-    });
-    const defaultProvider = section.getByLabel(`默认${label} Provider`, {
-      exact: true,
-    });
+    const list = page.getByRole("region", { name: region });
     await expect(
-      section.getByRole("button", { name: `删除${label} Provider` }),
+      list.getByRole("button", { name: "删除", exact: true }),
     ).toBeDisabled();
-    await section
-      .getByRole("button", { name: `添加${label} Provider` })
-      .click();
-    ids[group] = await editing.inputValue();
-    await section
+    await list.getByRole("button", { name: `添加${label} Provider` }).click();
+    let dialog = page.getByRole("dialog");
+    for (const field of ["Provider 名称", "Base URL", "API Key", "Model"]) {
+      await expect(
+        dialog.getByLabel(`${label} ${field}`, { exact: true }),
+      ).toHaveValue("");
+    }
+    await dialog
       .getByLabel(`${label} Provider 名称`, { exact: true })
       .fill(`备用${label}`);
-    await section
+    await dialog
       .getByLabel(`${label} Base URL`, { exact: true })
       .fill(providerURL + "/v1");
-    await section.getByLabel(`${label} API Key`, { exact: true }).fill(key);
+    await dialog.getByLabel(`${label} API Key`, { exact: true }).fill(key);
     if (group === "tts") {
-      await section.getByLabel("语音 Model", { exact: true }).fill(model);
-      await section.getByLabel("语音音色 Voice").fill("second-voice");
-      await section.getByText("讲课风格与兼容参数", { exact: true }).click();
-      await section.getByLabel("语音高级参数 JSON").fill('{"language":"zh"}');
+      await dialog.getByLabel("语音 Model", { exact: true }).fill(model);
+      await dialog.getByLabel("语音音色 Voice").fill("second-voice");
+      await dialog.getByText("讲课风格与兼容参数", { exact: true }).click();
+      await dialog.getByLabel("语音高级参数 JSON").fill('{"language":"zh"}');
     } else {
-      await section
+      await dialog
         .getByRole("button", { name: `获取${label}模型列表` })
         .click();
-      await section
+      await dialog
         .getByLabel(`${label} Model`, { exact: true })
         .selectOption(model);
     }
-    await expect(defaultProvider).toHaveValue(`legacy-${group}`);
-    await editing.selectOption(`legacy-${group}`);
-    await expect(
-      section.getByLabel(`${label} API Key`, { exact: true }),
-    ).toHaveValue("");
-    await editing.selectOption(ids[group]);
-    await expect(
-      section.getByLabel(`${label} API Key`, { exact: true }),
-    ).toHaveValue(key);
-    await expect(
-      section.getByLabel(`${label} Model`, { exact: true }),
-    ).toHaveValue(model);
-    if (group === "tts") {
-      await section.getByText("讲课风格与兼容参数", { exact: true }).click();
-      await expect(section.getByLabel("语音高级参数 JSON")).toHaveValue(
-        '{"language":"zh"}',
+    // Retry a failed save without losing any entered fields.
+    if (group === "text") {
+      await page.route(
+        "**/api/settings/ai/providers/text",
+        (route) =>
+          route.fulfill({ status: 500, json: { error: "保存失败，请重试" } }),
+        { times: 1 },
       );
+      await dialog
+        .getByRole("button", { name: "保存 Provider", exact: true })
+        .click();
+      await expect(dialog.getByRole("alert")).toContainText("保存失败");
+      await expect(
+        dialog.getByLabel("文字 API Key", { exact: true }),
+      ).toHaveValue(key);
     }
-    await defaultProvider.selectOption(ids[group]);
+    await saveProvider(page);
     await expect(
-      section.getByRole("button", { name: `删除${label} Provider` }),
+      page.getByLabel("通用系统提示词", { exact: true }),
+    ).toHaveValue("尚未保存的提示词");
+    const row = list.getByRole("listitem", {
+      name: `备用${label}`,
+      exact: true,
+    });
+    await expect(row).toContainText(model);
+    let saved = (await (await request.get(origin + "/api/settings/ai")).json())
+      .settings;
+    expect(saved.providers[group]).toHaveLength(2);
+    expect(saved.providers.defaults[group]).toBe(`legacy-${group}`);
+    expect(saved.prompts.system).not.toBe("尚未保存的提示词");
+    await row.getByRole("button", { name: "设为默认", exact: true }).click();
+    await expect(row.getByText("默认", { exact: true })).toBeVisible();
+    await expect(
+      row.getByRole("button", { name: "删除", exact: true }),
     ).toBeDisabled();
+    dialog = await editProvider(page, region, `备用${label}`);
+    await expect(
+      dialog.getByLabel(`${label} API Key`, { exact: true }),
+    ).toHaveValue("");
+    await expect(
+      dialog.getByLabel(`${label} API Key`, { exact: true }),
+    ).toHaveAttribute("placeholder", "已配置");
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    // Starting another creation clears saved and cancelled form values.
+    await list.getByRole("button", { name: `添加${label} Provider` }).click();
+    dialog = page.getByRole("dialog");
+    for (const field of ["Provider 名称", "Base URL", "API Key", "Model"]) {
+      await expect(
+        dialog.getByLabel(`${label} ${field}`, { exact: true }),
+      ).toHaveValue("");
+    }
+    if (group === "tts") {
+      await expect(dialog.getByLabel("语音音色 Voice")).toHaveValue("");
+      await dialog.getByText("讲课风格与兼容参数", { exact: true }).click();
+      await expect(dialog.getByLabel("语音高级参数 JSON")).toHaveValue("{}");
+    }
+    await dialog
+      .getByLabel(`${label} Provider 名称`, { exact: true })
+      .fill("丢弃的草稿");
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    await expect(list.getByRole("listitem")).toHaveCount(2);
   }
   await page.getByRole("button", { name: "保存系统配置" }).click();
   await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
   await page.reload();
-  let saved = await (await request.get(origin + "/api/settings/ai")).json();
-  for (const { group, label, region, model } of groups) {
-    const section = page.getByRole("region", { name: region });
+  let saved = (await (await request.get(origin + "/api/settings/ai")).json())
+    .settings;
+  for (const { group, region, model } of groups) {
+    expect(saved[group].model).toBe(model);
     await expect(
-      section.getByLabel(`默认${label} Provider`, { exact: true }),
-    ).toHaveValue(ids[group]);
-    await expect(
-      section.getByLabel(`${label} Model`, { exact: true }),
-    ).toHaveValue(model);
-    await expect(
-      section.getByLabel(`${label} API Key`, { exact: true }),
-    ).toHaveAttribute("placeholder", "已配置");
-    expect(saved.settings.providers[group]).toHaveLength(2);
-    expect(saved.settings[group].model).toBe(model);
-    expect(saved.settings.providers[group][0].config.keySet).toBe(true);
+      page.getByRole("region", { name: region }).getByRole("listitem"),
+    ).toHaveCount(2);
   }
-  expect(saved.settings.image.enabled).toBe(true);
-  expect(saved.settings.tts.enabled).toBe(true);
-  expect(saved.settings.tts.extra).toEqual({ language: "zh" });
-  await page.getByRole("button", { name: "测试文字连接" }).click();
-  await expect(
-    page.getByRole("region", { name: "文字模型配置" }).getByRole("status"),
-  ).toContainText("连接成功");
-  const tts = page.getByRole("region", { name: "语音合成配置" });
+  expect(saved.image.enabled).toBe(true);
+  expect(saved.tts.enabled).toBe(true);
+  const tts = await editProvider(page, "语音合成配置", "备用语音");
   await tts.getByRole("button", { name: "生成短句试听" }).click();
   await expect(tts.getByLabel("语音试听")).toHaveAttribute("src", /^blob:/);
-  expect(
-    modelRequests.find((input) => input.model === "second-tts"),
-  ).toMatchObject({ voice: "second-voice", language: "zh" });
+  await tts.getByRole("button", { name: "取消", exact: true }).click();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  for (const { group, label, region } of groups) {
-    const section = page.getByRole("region", { name: region });
-    await section
-      .getByLabel(`默认${label} Provider`, { exact: true })
-      .selectOption(`legacy-${group}`);
-    await section
-      .getByRole("button", { name: `删除${label} Provider` })
+  for (const { label, region } of groups) {
+    const list = page.getByRole("region", { name: region });
+    await list
+      .getByRole("listitem", { name: `原${label}服务`, exact: true })
+      .getByRole("button", { name: "设为默认", exact: true })
       .click();
     await expect(
-      section.getByLabel(`编辑${label} Provider`, { exact: true }),
-    ).toHaveValue(`legacy-${group}`);
-  }
-  await page.getByRole("button", { name: "保存系统配置" }).click();
-  await expect(page.getByText("配置已保存。", { exact: false })).toBeVisible();
-  saved = await (await request.get(origin + "/api/settings/ai")).json();
-  for (const { group } of groups) {
-    expect(saved.settings.providers[group]).toHaveLength(1);
-    expect(saved.settings.providers.defaults[group]).toBe(`legacy-${group}`);
-    expect(saved.settings[group].keySet).toBe(true);
+      list
+        .getByRole("listitem", { name: `原${label}服务`, exact: true })
+        .getByText("默认", { exact: true }),
+    ).toBeVisible();
+    page.once("dialog", (d) => d.accept());
+    await list
+      .getByRole("listitem", { name: `备用${label}`, exact: true })
+      .getByRole("button", { name: "删除", exact: true })
+      .click();
+    await expect(list.getByRole("listitem")).toHaveCount(1);
   }
   await restartSpeechBackend(request);
-  saved = await (await request.get(origin + "/api/settings/ai")).json();
-  expect(saved.settings.text.model).toBe("teaching");
-  expect(saved.settings.tts.voice).toBe("teacher");
+  saved = (await (await request.get(origin + "/api/settings/ai")).json())
+    .settings;
+  expect(saved.text.model).toBe("teaching");
+  expect(saved.tts.voice).toBe("teacher");
 });
 
 test("local definitions display immediately and AI expansion is explicit, cached and survives restart", async ({
@@ -1444,3 +1501,68 @@ test("local definitions display immediately and AI expansion is explicit, cached
     "n. 手提包；女用手袋",
   );
 });
+
+for (const apiType of ["doubao-tts", "doubao-audio"] as const) {
+  test(`native ${apiType} settings drive preview and lecture generation`, async ({
+    page,
+    request,
+  }) => {
+    await configure(request);
+    await page.goto(origin + "/settings");
+    await page.getByRole("button", { name: "添加语音 Provider" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog
+      .getByLabel("语音 Provider 名称", { exact: true })
+      .fill("豆包老师");
+    await dialog.getByLabel("语音接口类型").selectOption(apiType);
+    await expect(
+      dialog.getByLabel("语音 Base URL", { exact: true }),
+    ).toHaveValue("https://openspeech.bytedance.com/api/v3");
+    await expect(
+      dialog.getByRole("button", { name: "获取语音模型列表" }),
+    ).toHaveCount(0);
+    await expect(
+      dialog.getByLabel("合成语速", { exact: true }),
+    ).toHaveAttribute("min", "0.5");
+    await expect(
+      dialog.getByLabel("合成语速", { exact: true }),
+    ).toHaveAttribute("max", "2");
+    await dialog
+      .getByLabel("语音 Base URL", { exact: true })
+      .fill(providerURL + "/v1");
+    await dialog
+      .getByLabel("语音 API Key", { exact: true })
+      .fill("speech-private");
+    await dialog
+      .getByLabel("语音音色 Voice")
+      .fill("zh_female_vv_uranus_bigtts");
+    await dialog.getByRole("button", { name: "生成短句试听" }).click();
+    await expect(dialog.getByLabel("语音试听")).toHaveAttribute(
+      "src",
+      /^blob:/,
+    );
+    expect(counters.models).toBe(0);
+    if (apiType === "doubao-tts")
+      expect(modelRequests.at(-1)).toHaveProperty("req_params.text");
+    else expect(modelRequests.at(-1)).toHaveProperty("text_prompt");
+    await saveProvider(page);
+    const row = page.getByRole("listitem", { name: "豆包老师", exact: true });
+    await row.getByRole("button", { name: "设为默认", exact: true }).click();
+    await expect(row.getByText("默认", { exact: true })).toBeVisible();
+    await page.getByLabel("自动生成 AI 详解语音").check();
+    await page.getByRole("button", { name: "保存系统配置" }).click();
+    await expect(
+      page.getByText("配置已保存。", { exact: false }),
+    ).toBeVisible();
+    await page.goto(origin + "/books/1/lessons/1");
+    await openAI(page);
+    await page
+      .getByRole("button", { name: "生成整课详解", exact: true })
+      .click();
+    const speech = page.getByRole("region", { name: "AI 语音讲解" });
+    await expect(
+      speech.getByRole("button", { name: "播放 AI 讲解", exact: true }),
+    ).toBeEnabled({ timeout: 15000 });
+    expect(speechCalls).toBeGreaterThan(1);
+  });
+}

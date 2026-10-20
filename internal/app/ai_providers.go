@@ -176,7 +176,7 @@ func (c *aiSettings) prepareProviders(saved aiSettings) error {
 		if err := prepareModel(&c.Image.modelConfig, saved.Image.modelConfig); err != nil {
 			return err
 		}
-		if err := prepareModel(&c.TTS.modelConfig, saved.TTS.modelConfig); err != nil {
+		if err := prepareTTS(&c.TTS, saved.TTS); err != nil {
 			return err
 		}
 		if saved.Providers != nil {
@@ -218,7 +218,7 @@ func (c *aiSettings) prepareProviders(saved aiSettings) error {
 			return err
 		}
 		if err := prepareProviderList(p.TTS, p.Defaults.TTS, func(id string, v *ttsConfig) error {
-			if err := prepareModel(&v.modelConfig, saved.Providers.savedModel("tts", id)); err != nil {
+			if err := prepareTTS(v, saved.Providers.savedTTS(id)); err != nil {
 				return err
 			}
 			v.Enabled = false

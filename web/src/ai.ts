@@ -96,7 +96,20 @@ export type ModelConfig = {
   clearKey?: boolean;
   model: string;
 };
+export type SpeechAPIType = "openai" | "doubao-tts" | "doubao-audio";
+export type SpeechAdapter = {
+  id: SpeechAPIType;
+  label: string;
+  modelListing: boolean;
+  minSpeed: number;
+  maxSpeed: number;
+  defaults: TTSConfig;
+};
 export type TTSConfig = ModelConfig & {
+  apiType?: SpeechAPIType;
+  resourceId?: string;
+  authMode?: "api-key" | "app-token";
+  appId?: string;
   enabled: boolean;
   voice: string;
   speed: number;
