@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   buildMarkers,
+  lessonAudioRange,
   type AudioMarker,
   type TimedParagraph,
 } from "./textbookMarkers";
@@ -27,15 +28,28 @@ export function shadowSegments(
   mode: MarkerMode,
   duration: number,
 ): ShadowSegment[] {
-  const markers = buildMarkers(paragraphs, mode, duration);
-  // Equal starts represent one boundary, rather than a zero-length turn.
-  const unique = markers.filter(
-    (marker, index) => marker.time !== markers[index - 1]?.time,
+  const ends = new Map(
+    mode === "sentence"
+      ? paragraphs.flatMap((p) => p.sentences.map((s) => [s.id, s.end] as const))
+      : paragraphs.map(
+          (p) => [p.id, lessonAudioRange([p], duration)?.end] as const,
+        ),
   );
-  return unique.slice(0, -1).flatMap((marker, index) => {
-    const end = unique[index + 1].time;
-    return end > marker.time ? [{ start: marker.time, end, marker }] : [];
-  });
+  const segments: ShadowSegment[] = [];
+  for (const marker of buildMarkers(paragraphs, mode, duration)) {
+    if (marker.boundary === "end") continue;
+    const end = ends.get(marker.targetId)!;
+    const previous = segments.at(-1);
+    // Equal starts share a turn; include all speech at that boundary.
+    if (previous?.start === marker.time)
+      previous.end = Math.max(previous.end, end);
+    else segments.push({ start: marker.time, end, marker });
+  }
+  return segments.map((segment, index) => ({
+    ...segment,
+    // Stop at this turn's own end, before the next turn can become audible.
+    end: Math.min(segment.end, segments[index + 1]?.start ?? duration),
+  }));
 }
 
 export function shadowDelay(duration: number, rate: number) {

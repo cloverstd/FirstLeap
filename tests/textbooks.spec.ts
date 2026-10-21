@@ -1495,7 +1495,7 @@ async function shadowReady(
   await page.getByRole("option", { name: "2×", exact: true }).click();
 }
 
-async function approachShadowBoundary(page: Page, time = 4.8) {
+async function approachShadowBoundary(page: Page, time = 3.6) {
   const audio = page.getByTestId("textbook-audio");
   await audio.evaluate((a: HTMLAudioElement, time) => {
     a.currentTime = time;
@@ -1514,6 +1514,41 @@ async function expectShadowPosition(page: Page, time: number) {
     .toBeCloseTo(time, 2);
 }
 
+for (const rate of [0.5, 2]) {
+  test(`shadow stops at the spoken end at ${rate}x without animation frames or timeupdate callbacks`, async ({
+    page,
+  }) => {
+    await shadowReady(page);
+    if (rate !== 2) {
+      await page.getByRole("combobox", { name: "精听倍速" }).click();
+      await page.getByRole("option", { name: `${rate}×`, exact: true }).click();
+    }
+    const audio = page.getByTestId("textbook-audio");
+    await audio.evaluate((a: HTMLAudioElement) => {
+      // Record the actual stop before any correction of currentTime. Checking
+      // only the final paused position would miss audio already played too far.
+      const pause = a.pause.bind(a);
+      a.pause = () => {
+        if (!a.paused) a.dataset.stoppedAt = String(a.currentTime);
+        pause();
+      };
+      a.addEventListener(
+        "timeupdate",
+        (event) => event.stopImmediatePropagation(),
+        true,
+      );
+      window.requestAnimationFrame = () => 0;
+    });
+    await approachShadowBoundary(page, 3.4);
+    const stoppedAt = await audio.evaluate((a: HTMLAudioElement) =>
+      Number(a.dataset.stoppedAt),
+    );
+    expect(stoppedAt).toBeGreaterThanOrEqual(3.799);
+    expect(stoppedAt).toBeLessThan(3.95);
+    await expectShadowPosition(page, 3.8);
+  });
+}
+
 test("shadow reading pauses at sentence boundaries, holds the previous highlight and scales with speed", async ({
   page,
 }) => {
@@ -1521,14 +1556,14 @@ test("shadow reading pauses at sentence boundaries, holds the previous highlight
   await approachShadowBoundary(page);
   const audio = page.getByTestId("textbook-audio");
   const started = Date.now();
-  await expectShadowPosition(page, 5);
+  await expectShadowPosition(page, 3.8);
   await expect(page.locator(".reading-sentence").first()).toHaveAttribute(
     "aria-current",
     "true",
   );
   await expect(page.locator(".reading-shadow-status")).toContainText("请跟读");
   await page.waitForTimeout(200);
-  await expectShadowPosition(page, 5);
+  await expectShadowPosition(page, 3.8);
   // An existing turn keeps the speed with which its audio was heard.
   await page.getByRole("combobox", { name: "精听倍速" }).click();
   await page.getByRole("option", { name: "0.5×", exact: true }).click();
@@ -1727,7 +1762,7 @@ test("manual pause cancels a shadow turn and resuming skips its remaining wait",
   await expect(page.locator(".reading-shadow-status")).toHaveCount(0);
   await page.waitForTimeout(1700);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
-  await expectShadowPosition(page, 5);
+  await expectShadowPosition(page, 3.8);
   await page.getByRole("region", { name: "课文精听", exact: true }).focus();
   await page.keyboard.press("Space");
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
@@ -1812,10 +1847,7 @@ test("embedded textbook player supports shadow reading and missing timings still
 }) => {
   await shadowReady(page, "sentence", "/learn/lesson1");
   await approachShadowBoundary(page);
-  await expect(page.getByTestId("textbook-audio")).toHaveJSProperty(
-    "currentTime",
-    5,
-  );
+  await expectShadowPosition(page, 3.8);
   await page.goto("/books/1/lessons/1");
   await page.route("**/api/books/1/lessons/1", (route) =>
     route.fulfill({
@@ -1889,10 +1921,10 @@ test("shadow final turn completes once when the body and audio end together", as
   await page.getByRole("option", { name: "1×", exact: true }).click();
   await page.getByRole("button", { name: "播放精听", exact: true }).click();
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 0.9);
+  await expectShadowPosition(page, 0.9);
   await expect(page.locator("audio")).toHaveJSProperty("paused", false);
   await expect(page.locator(".reading-shadow-status")).toBeVisible();
-  await expect(page.locator("audio")).toHaveJSProperty("currentTime", 1.8);
+  await expectShadowPosition(page, 1.8);
   await expect(page.locator("audio")).toHaveJSProperty("paused", true);
   await expect(
     page.getByRole("button", { name: "暂停精听", exact: true }),

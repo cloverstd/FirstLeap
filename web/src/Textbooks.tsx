@@ -1034,6 +1034,51 @@ function ReadingRoom({
   };
   const tickRef = useRef(tick);
   tickRef.current = tick;
+  useEffect(() => {
+    if (!shadow.settings.enabled) return;
+    const media = audio.current!;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancel = () => {
+      clearTimeout(timer);
+      timer = undefined;
+    };
+    const schedule = () => {
+      cancel();
+      const segment = nextShadow.current;
+      if (
+        !segment ||
+        source.current.kind !== "full" ||
+        media.currentSrc !== new URL(source.current.url, location.href).href ||
+        !playIntent.current ||
+        shadow.waiting.current ||
+        media.paused ||
+        media.seeking ||
+        media.readyState < 3
+      )
+        return;
+      // Media events and animation frames may arrive after the sentence end.
+      // Use the media clock to schedule the stop, then recheck for buffering
+      // or clock rounding before entering the follow-along turn.
+      timer = setTimeout(() => {
+        timer = undefined;
+        tickRef.current();
+        schedule();
+      }, Math.max(
+        1,
+        shadowDelay(segment.end - media.currentTime, media.playbackRate),
+      ));
+    };
+    const resumeEvents = ["playing", "ratechange", "seeked", "timeupdate"];
+    const cancelEvents = ["pause", "seeking", "waiting", "emptied", "ended"];
+    resumeEvents.forEach((event) => media.addEventListener(event, schedule));
+    cancelEvents.forEach((event) => media.addEventListener(event, cancel));
+    schedule();
+    return () => {
+      cancel();
+      resumeEvents.forEach((event) => media.removeEventListener(event, schedule));
+      cancelEvents.forEach((event) => media.removeEventListener(event, cancel));
+    };
+  }, [key, shadow.settings.enabled, shadow.settings.mode]);
   const move = (direction: number) => {
     if (firstIndex < 0 && direction < 0) return;
     const next = sentences[firstIndex + direction];

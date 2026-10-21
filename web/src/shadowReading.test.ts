@@ -21,7 +21,7 @@ const paragraphs = [
 ];
 
 describe("shadow reading turns", () => {
-  it("uses consecutive starts and the final body end, excluding intro and outro", () => {
+  it("stops at each sentence or paragraph end, excluding the following silence", () => {
     expect(
       shadowSegments(paragraphs, "sentence", 12).map((s) => [
         s.start,
@@ -29,8 +29,8 @@ describe("shadow reading turns", () => {
         s.marker.targetId,
       ]),
     ).toEqual([
-      [2, 5, "s1"],
-      [5, 8, "s2"],
+      [2, 3.8, "s1"],
+      [5, 6.8, "s2"],
       [8, 10, "s3"],
     ]);
     expect(
@@ -40,7 +40,7 @@ describe("shadow reading turns", () => {
         s.marker.targetId,
       ]),
     ).toEqual([
-      [2, 8, "p1"],
+      [2, 6.8, "p1"],
       [8, 10, "p2"],
     ]);
   });
@@ -64,9 +64,26 @@ describe("shadow reading turns", () => {
         (s) => [s.start, s.end],
       ),
     ).toEqual([
-      [2, 5],
-      [5, 8],
+      [2, 4],
+      [5, 6.8],
       [8, 10],
+    ]);
+  });
+  it("does not let overlapping timestamps run into the next sentence", () => {
+    const overlapping = [
+      {
+        id: "p1",
+        sentences: [
+          { id: "s1", text: "Hello", start: 2, end: 5.1 },
+          { id: "s2", text: "Again", start: 5, end: 6.8 },
+        ],
+      },
+    ];
+    expect(
+      shadowSegments(overlapping, "sentence", 10).map((s) => [s.start, s.end]),
+    ).toEqual([
+      [2, 5],
+      [5, 6.8],
     ]);
   });
   it("scales the wait with playback speed and rejects unusable durations", () => {
